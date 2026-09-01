@@ -29,7 +29,14 @@ from core.users import (
     google_client_id, verify_google_credential, get_or_create_user,
     create_session, user_for_session, destroy_session, user_count, session_count,
 )
-from meeting.meet.auth import CONFIG_DIR, list_profile_slots, save_auth, has_auth, clear_profile
+from meeting.meet.auth import (
+    CONFIG_DIR,
+    list_profile_slots,
+    save_auth,
+    has_auth,
+    clear_profile,
+    clear_profile_locks,
+)
 from meeting.meet.bot import MeetBot, RECORDINGS_DIR
 
 SESSION_COOKIE = "atom_session"
@@ -145,8 +152,9 @@ async def auth_reset(request: Request) -> JSONResponse:
     blocked = _admin_guard(request)
     if blocked:
         return blocked
+    removed_locks = clear_profile_locks(slot=0)
     _auth_state.update(running=False, done=False, error=None)
-    return JSONResponse({"ok": True})
+    return JSONResponse({"ok": True, "removed_locks": removed_locks})
 
 
 @app.post("/auth/clear")
@@ -174,8 +182,9 @@ async def auth_start(request: Request) -> JSONResponse:
     if _auth_state["running"]:
         return JSONResponse({"ok": False, "message": "Auth already in progress"})
 
+    _auth_state.update(running=True, done=False, error=None)
+
     async def _run():
-        _auth_state.update(running=True, done=False, error=None)
         try:
             await save_auth(slot=0)
             _auth_state.update(done=True, error=None)

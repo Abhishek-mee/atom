@@ -64,6 +64,27 @@ def clear_profile(slot: int = 0) -> bool:
     return False
 
 
+def clear_profile_locks(slot: int = 0) -> list[str]:
+    """Remove stale Chromium singleton locks from a persistent profile.
+
+    A failed or interrupted Railway auth attempt can leave these files behind.
+    Chromium then refuses to reopen the profile even though no useful browser
+    session is running.
+    """
+    p = profile_dir(slot)
+    removed: list[str] = []
+    for name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+        target = p / name
+        if not target.exists() and not target.is_symlink():
+            continue
+        try:
+            target.unlink()
+            removed.append(name)
+        except OSError as exc:
+            logger.warning("Could not remove Chromium profile lock %s: %s", target, exc)
+    return removed
+
+
 def _profile_has_login(p: Path) -> bool:
     """A signed-in Chrome profile has a Default/Cookies (or Network/Cookies) file."""
     if not p.exists():
@@ -113,6 +134,7 @@ async def save_auth(slot: int = 0, timeout_s: int = 300) -> None:
 
     pdir = profile_dir(slot)
     pdir.mkdir(parents=True, exist_ok=True)
+    clear_profile_locks(slot)
 
     print("\n" + "=" * 62)
     print(f"  ATOM — Google Sign-In  (slot {slot})")
