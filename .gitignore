@@ -1,4 +1,5 @@
 .env
+.railway-admin-token.txt
 config/google_credentials.json
 config/google_token.json
 __pycache__/
