@@ -105,6 +105,19 @@ body > * { position:relative; z-index:1; }
 .login-points { display:flex; flex-wrap:wrap; gap:10px; margin-top:18px; }
 .login-point { font-family:var(--m); font-size:10px; letter-spacing:.8px; text-transform:uppercase; color:var(--ink2); background:var(--panel2); border:1px solid var(--line); border-radius:999px; padding:9px 12px; }
 #gsi { min-height:44px; display:flex; justify-content:flex-start; margin-top:18px; }
+.login-action { width:100%; margin-top:10px; padding:16px; background:var(--panel2); border:1px solid var(--line); border-radius:8px; }
+.login-action-head { font-family:var(--m); font-size:9px; letter-spacing:1.7px; text-transform:uppercase; color:var(--muted); margin-bottom:10px; }
+.login-action-copy { color:var(--ink2); font-size:13px; line-height:1.6; max-width:460px; }
+.login-action.waiting #gsi { opacity:.35; }
+.login-action.ready { border-color:rgba(44,138,94,.34); }
+.login-action.bad { border-color:rgba(201,72,57,.36); }
+.login-status { display:inline-flex; align-items:center; gap:7px; margin-top:12px; font-family:var(--m); font-size:10px; color:var(--muted); }
+.login-status::before { content:''; width:7px; height:7px; border-radius:50%; background:var(--faint); }
+.login-status.ready { color:var(--green); }
+.login-status.ready::before { background:var(--green); }
+.login-status.bad { color:var(--red); }
+.login-status.bad::before { background:var(--red); }
+.login-status.waiting::before { border:1px solid var(--accent); border-top-color:transparent; background:transparent; animation:spin .8s linear infinite; }
 .login-note { font-family:var(--m); font-size:10px; color:var(--faint); margin-top:14px; max-width:420px; line-height:1.8; letter-spacing:.3px; }
 .login-meter { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-top:24px; }
 .login-metric { background:var(--panel2); border:1px solid var(--line); border-radius:var(--radius); padding:12px 14px; }
@@ -328,8 +341,13 @@ body > * { position:relative; z-index:1; }
           <span class="login-point">audio + video recording</span>
           <span class="login-point">email delivery</span>
         </div>
-        <div id="gsi"></div>
-        <div class="login-note" id="loginNote">continue with Google to create your profile and keep your recordings tied to your email.</div>
+        <div class="login-action waiting" id="loginAction">
+          <div class="login-action-head">user auth required</div>
+          <div class="login-action-copy">Sign in with Google to open Atom, save sessions to your account, and send finished recordings to your Gmail.</div>
+          <div id="gsi"></div>
+          <div class="login-status waiting" id="loginStatus">checking authentication</div>
+        </div>
+        <div class="login-note" id="loginNote">Your Google profile is used only for account access, recording ownership, and Gmail delivery.</div>
       </div>
       <div class="login-meter">
         <div class="login-metric"><div class="v">01</div><div class="l">paste invite</div></div>
@@ -532,6 +550,11 @@ function handle(m) {
 }
 
 function joinMeeting() {
+  if (!loggedIn) {
+    showLogin();
+    setLoginState('bad', 'sign in with Google first', 'Continue with Google to use Atom.');
+    return;
+  }
   const url=(document.getElementById('heroUrl').value||'').trim();
   if (!appConfig.auth_ready) {
     setOpsState('warn', 'bot Google profile is not ready - open /admin after deployment and complete bot sign-in');
@@ -655,6 +678,14 @@ function showResult(entry) {
 // ── LOGIN (Continue with Google) ──────────────────────────────
 function showLogin()  { document.getElementById('login').classList.remove('hide'); }
 function hideLogin()  { document.getElementById('login').classList.add('hide'); }
+function setLoginState(kind, status, note) {
+  const action = document.getElementById('loginAction');
+  const statusEl = document.getElementById('loginStatus');
+  action.className = 'login-action ' + kind;
+  statusEl.className = 'login-status ' + kind;
+  statusEl.textContent = status;
+  if (note) document.getElementById('loginNote').textContent = note;
+}
 
 function setProfile(username) {
   document.getElementById('pcName').textContent = username;
@@ -663,21 +694,23 @@ function setProfile(username) {
 }
 
 async function onGoogleCredential(resp) {
+  setLoginState('waiting', 'signing in', 'Verifying your Google sign-in with Atom.');
   try {
     const r = await apiFetch('/auth/google', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ credential: resp.credential }),
     });
-    if (!r.ok) { document.getElementById('loginNote').textContent='sign-in failed — try again'; return; }
+    if (!r.ok) { setLoginState('bad', 'sign-in failed', 'Check the Google OAuth client setup, then try again.'); return; }
     const d = await r.json();
     setProfile(d.username);
+    setLoginState('ready', 'signed in', 'Welcome to Atom.');
     hideLogin();
     loadLibrary();
     // Reconnect WS now that we have a session cookie (so the bot knows who we are)
     if (ws) { try { ws.close(); } catch(e){} ws=null; }
     ensureWS();
   } catch(e) {
-    document.getElementById('loginNote').textContent='sign-in error — try again';
+    setLoginState('bad', 'sign-in error', 'Could not reach the Atom API. Try again after the backend is online.');
   }
 }
 
@@ -689,13 +722,19 @@ async function logout() {
 }
 
 async function initApp() {
+  showLogin();
+  setLoginState('waiting', 'checking authentication', 'Looking for an existing Atom session.');
+
   // 1. Get Google client id
   let cid = '';
   try {
     appConfig = await (await apiFetch('/config')).json();
     cid = appConfig.google_client_id;
     refreshOpsState();
-  } catch(e) {}
+  } catch(e) {
+    setLoginState('bad', 'backend unavailable', 'Atom could not reach the API. Check the Railway deployment and API domain.');
+    return;
+  }
 
   // 2. Already signed in?
   try {
@@ -705,16 +744,17 @@ async function initApp() {
 
   // 3. Show login with the Google button
   if (!cid) {
-    document.getElementById('loginNote').textContent =
-      'login not configured — set GOOGLE_CLIENT_ID in .env';
+    setLoginState('bad', 'Google login not configured', 'Set GOOGLE_CLIENT_ID in Railway, then redeploy Atom.');
     return;
   }
+  setLoginState('waiting', 'loading Google sign-in', 'Continue with Google to create your Atom profile.');
   const tryRender = () => {
     if (!(window.google && google.accounts && google.accounts.id)) { setTimeout(tryRender, 200); return; }
     google.accounts.id.initialize({ client_id: cid, callback: onGoogleCredential });
     const gtheme = document.documentElement.getAttribute('data-theme')==='light' ? 'outline' : 'filled_black';
     google.accounts.id.renderButton(document.getElementById('gsi'),
       { theme:gtheme, size:'large', text:'continue_with', shape:'pill', width:260 });
+    setLoginState('ready', 'ready to sign in', 'Continue with Google to create your Atom profile.');
   };
   tryRender();
 }
