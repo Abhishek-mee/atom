@@ -80,19 +80,43 @@ html[data-theme="dark"] body::before { opacity:.18; }
 body > * { position:relative; z-index:1; }
 .mono { font-family:var(--m); }
 
-/* IDLE */
-#idle { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; transition:opacity .4s, transform .4s; z-index:10; padding:28px 18px; }
+/* DASHBOARD */
+#idle { position:fixed; inset:0; display:flex; flex-direction:column; transition:opacity .4s, transform .4s; z-index:10; overflow-y:auto; }
 #idle.out { opacity:0; transform:translateY(-12px); pointer-events:none; }
+.dash-nav { height:64px; flex-shrink:0; display:flex; align-items:center; justify-content:space-between; gap:18px; padding:0 24px; border-bottom:1px solid var(--line); background:rgba(255,255,255,.82); backdrop-filter:blur(10px); }
+html[data-theme="dark"] .dash-nav, html[data-theme="dark"] .topbar { background:rgba(37,34,28,.82); }
+.dash-brand { display:flex; align-items:center; gap:10px; min-width:0; }
+.dash-mark { width:26px; height:26px; flex-shrink:0; }
+.dash-mark rect[fill="#0F0F0F"]{ fill:var(--accent); } .dash-mark rect[fill="#ECEAE4"]{ fill:var(--panel); }
+.dash-word { font-size:16px; font-weight:800; letter-spacing:-.6px; }
+.dash-sub { font-family:var(--m); font-size:9px; letter-spacing:1.3px; color:var(--muted); text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.dash-actions { display:flex; align-items:center; gap:8px; }
+.dash-link { font-family:var(--m); font-size:10px; color:var(--muted); background:transparent; border:1px solid transparent; border-radius:6px; padding:7px 10px; cursor:pointer; transition:all .15s; }
+.dash-link:hover { color:var(--accent); border-color:var(--line); background:var(--panel2); }
+.dash-user { display:flex; align-items:center; gap:9px; border:1px solid var(--line); background:var(--panel); border-radius:8px; padding:6px 8px 6px 6px; cursor:pointer; box-shadow:var(--shadow); }
+.dash-avatar { width:30px; height:30px; border-radius:7px; background:var(--bg); border:1px solid var(--line); display:flex; align-items:center; justify-content:center; color:var(--accent); font-weight:800; }
+.dash-user-meta { display:flex; flex-direction:column; min-width:0; }
+.dash-user-name { font-size:12px; font-weight:700; max-width:150px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.dash-user-email { font-family:var(--m); font-size:9px; color:var(--muted); max-width:170px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.dash-wrap { width:min(1180px, calc(100vw - 32px)); margin:0 auto; padding:32px 0 42px; display:grid; grid-template-columns:minmax(0,1.25fr) minmax(320px,.75fr); gap:18px; align-items:start; }
+.dash-main { display:flex; flex-direction:column; gap:18px; min-width:0; }
+.dash-panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; box-shadow:var(--shadow); }
+.dash-hero { padding:24px; }
+.dash-kicker { font-family:var(--m); font-size:9px; letter-spacing:1.8px; color:var(--muted); text-transform:uppercase; }
+.dash-title { margin-top:9px; font-size:32px; line-height:1.1; font-weight:800; letter-spacing:-1.4px; }
+.dash-copy { margin-top:8px; color:var(--ink2); line-height:1.65; max-width:650px; }
 .hero-logo { display:flex; flex-direction:column; align-items:center; gap:12px; margin-bottom:28px; }
 .hero-mark { width:44px; height:44px; }
 .hero-mark rect[fill="#0F0F0F"]{ fill:var(--accent); } .hero-mark rect[fill="#ECEAE4"]{ fill:var(--bg); }
 .hero-name { font-size:34px; font-weight:800; letter-spacing:-2px; text-align:center; }
 .hero-sub  { font-family:var(--m); font-size:10px; letter-spacing:2px; text-transform:uppercase; color:var(--muted); margin-top:4px; text-align:center; }
 .hero-card { width:min(660px, calc(100vw - 24px)); background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; box-shadow:var(--shadow); position:relative; }
+.dash-hero .hero-card { width:100%; margin-top:18px; box-shadow:none; }
 .hero-card::before { content:'new session'; position:absolute; top:11px; left:14px; font-family:var(--m); font-size:8.5px; letter-spacing:1.8px; color:var(--faint); text-transform:uppercase; }
 .hero-input { width:100%; border:none; outline:none; background:transparent; font-family:var(--f); font-size:18px; color:var(--ink); padding:38px 16px 16px; caret-color:var(--accent); }
 .hero-input::placeholder { color:var(--faint); }
 .flow-strip { width:min(660px, calc(100vw - 24px)); display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1px; margin:14px 0 0; border:1px solid var(--line); border-radius:8px; overflow:hidden; box-shadow:var(--shadow); }
+.dash-hero .flow-strip { width:100%; box-shadow:none; }
 .flow-step { background:var(--panel); padding:12px 10px; text-align:center; }
 .flow-step .k { font-family:var(--m); font-size:8px; letter-spacing:1.5px; text-transform:uppercase; color:var(--faint); }
 .flow-step .v { margin-top:4px; font-size:13px; font-weight:700; color:var(--ink2); }
@@ -102,7 +126,9 @@ body > * { position:relative; z-index:1; }
 .hero-btn:hover { background:var(--accent2); box-shadow:0 12px 26px rgba(199,122,24,.22); }
 .hero-btn:disabled { opacity:.35; cursor:not-allowed; }
 .hero-sub2 { font-family:var(--m); margin-top:16px; font-size:10px; letter-spacing:.5px; color:var(--faint); text-align:center; max-width:520px; line-height:1.8; }
+.dash-hero .hero-sub2 { text-align:left; max-width:680px; }
 .ops-state { display:none; margin-top:12px; width:min(660px, calc(100vw - 24px)); font-family:var(--m); font-size:10px; color:var(--muted); background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px; text-align:center; line-height:1.6; box-shadow:var(--shadow); }
+.dash-hero .ops-state { width:100%; box-shadow:none; text-align:left; }
 .ops-state.ready { color:var(--green); border-color:rgba(44,138,94,.35); }
 .ops-state.warn { color:var(--accent); border-color:rgba(199,122,24,.35); }
 .ops-state.bad { color:var(--red); border-color:rgba(201,72,57,.35); }
@@ -165,10 +191,15 @@ body > * { position:relative; z-index:1; }
   .login-meter { grid-template-columns:1fr; }
   .pricing-grid { grid-template-columns:1fr; }
   .flow-strip { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .dash-wrap { grid-template-columns:1fr; padding-top:18px; }
+  .dash-nav { padding:0 14px; }
+  .dash-link { display:none; }
+  .dash-user-email { display:none; }
+  .dash-title { font-size:26px; }
 }
 
 /* profile chip */
-.profile-chip { position:fixed; top:18px; right:18px; display:flex; align-items:center; gap:8px; z-index:20; }
+.profile-chip { display:none; }
 .pc-name { font-family:var(--m); font-size:11px; font-weight:500; color:var(--accent); background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:7px 12px; cursor:pointer; transition:border-color .15s, transform .15s; box-shadow:var(--shadow); }
 .pc-name:hover { border-color:var(--accent); }
 .pc-name .at { color:var(--faint); }
@@ -212,7 +243,20 @@ body > * { position:relative; z-index:1; }
 .pcard-empty { font-family:var(--m); font-size:11px; color:var(--faint); padding:12px 0; }
 
 /* library */
-.library { margin-top:34px; width:min(920px, calc(100vw - 24px)); }
+.library { width:100%; }
+.dash-section { padding:18px; }
+.dash-side { display:flex; flex-direction:column; gap:18px; min-width:0; }
+.profile-summary { padding:18px; }
+.summary-id { display:flex; align-items:center; gap:13px; }
+.summary-avatar { width:54px; height:54px; border-radius:8px; background:var(--bg); border:1px solid var(--line); display:flex; align-items:center; justify-content:center; color:var(--accent); font-size:22px; font-weight:800; }
+.summary-name { font-size:18px; font-weight:800; letter-spacing:-.4px; }
+.summary-email { margin-top:2px; font-family:var(--m); font-size:10px; color:var(--muted); word-break:break-word; }
+.summary-stats { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:1px; border:1px solid var(--line); border-radius:8px; overflow:hidden; margin-top:16px; }
+.summary-stat { background:var(--panel2); padding:12px 8px; text-align:center; }
+.summary-stat .v { font-family:var(--m); font-size:17px; font-weight:800; }
+.summary-stat .l { margin-top:3px; font-family:var(--m); font-size:8px; letter-spacing:1.2px; color:var(--faint); text-transform:uppercase; }
+.summary-btn { width:100%; margin-top:14px; border:1px solid var(--line); background:var(--panel); color:var(--ink2); border-radius:6px; padding:10px 12px; font:700 11px var(--m); cursor:pointer; }
+.summary-btn:hover { color:var(--accent); border-color:var(--accent); }
 .lib-head { font-family:var(--m); font-size:9.5px; font-weight:600; letter-spacing:2px; text-transform:uppercase; color:var(--muted); margin-bottom:12px; display:flex; align-items:center; gap:8px; }
 .lib-head::after { content:''; flex:1; height:1px; background:var(--line); }
 .lib-list { display:flex; flex-direction:column; gap:6px; max-height:40vh; overflow-y:auto; }
@@ -413,42 +457,85 @@ body > * { position:relative; z-index:1; }
 </div>
 <!-- IDLE -->
 <div id="idle">
-  <div class="profile-chip" id="profileChip" style="display:none">
-    <span class="pc-name" onclick="openCard()" title="view profile &amp; sessions"><span class="at">@</span><span id="pcName">—</span></span>
-    <button class="pc-logout" onclick="logout()">log out</button>
-  </div>
-  <div class="hero-logo">
-    <svg class="hero-mark" viewBox="0 0 32 32" fill="none">
-      <rect x="12" y="0" width="8" height="4" fill="#0F0F0F"/><rect x="12" y="28" width="8" height="4" fill="#0F0F0F"/>
-      <rect x="0" y="12" width="4" height="8" fill="#0F0F0F"/><rect x="28" y="12" width="4" height="8" fill="#0F0F0F"/>
-      <rect x="4" y="4" width="24" height="24" fill="#0F0F0F"/><rect x="8" y="8" width="16" height="16" fill="#ECEAE4"/>
-      <rect x="12" y="12" width="8" height="8" fill="#0F0F0F"/>
-    </svg>
-    <div>
-      <div class="hero-name">atom</div>
-      <div class="hero-sub">gmeet invite to gmail recording</div>
+  <nav class="dash-nav">
+    <div class="dash-brand">
+      <svg class="dash-mark" viewBox="0 0 32 32" fill="none">
+        <rect x="12" y="0" width="8" height="4" fill="#0F0F0F"/><rect x="12" y="28" width="8" height="4" fill="#0F0F0F"/>
+        <rect x="0" y="12" width="4" height="8" fill="#0F0F0F"/><rect x="28" y="12" width="4" height="8" fill="#0F0F0F"/>
+        <rect x="4" y="4" width="24" height="24" fill="#0F0F0F"/><rect x="8" y="8" width="16" height="16" fill="#ECEAE4"/>
+        <rect x="12" y="12" width="8" height="8" fill="#0F0F0F"/>
+      </svg>
+      <div>
+        <div class="dash-word">atom</div>
+        <div class="dash-sub">gmeet invite to gmail recording</div>
+      </div>
     </div>
-  </div>
-  <div class="hero-card">
-    <input class="hero-input" id="heroUrl" type="url" placeholder="paste your Google Meet link" autocomplete="off" onkeydown="if(event.key==='Enter') joinMeeting()"/>
-    <div class="hero-footer">
-      <span class="hero-hint">gmeet link/invite -> join -> record -> send</span>
-      <button class="hero-btn" id="heroBtn" onclick="joinMeeting()">join, record, send</button>
+    <div class="dash-actions">
+      <button class="dash-link" onclick="loadLibrary()">recordings</button>
+      <button class="dash-link" onclick="openCard()">profile</button>
+      <button class="dash-link" onclick="logout()">logout</button>
+      <button class="dash-user" onclick="openCard()" title="view profile">
+        <span class="dash-avatar" id="navAvatar">A</span>
+        <span class="dash-user-meta">
+          <span class="dash-user-name" id="navName">account</span>
+          <span class="dash-user-email" id="navEmail">signed in</span>
+        </span>
+      </button>
     </div>
-  </div>
-  <div class="flow-strip" aria-label="demo flow">
-    <div class="flow-step"><div class="k">01</div><div class="v">invite</div></div>
-    <div class="flow-step"><div class="k">02</div><div class="v">join</div></div>
-    <div class="flow-step"><div class="k">03</div><div class="v">record</div></div>
-    <div class="flow-step"><div class="k">04</div><div class="v">send</div></div>
-  </div>
-  <div class="hero-sub2">Atom joins the Meet by itself, records audio and video, then sends the finished recording to your Gmail and keeps it in your library.</div>
-  <div class="ops-state" id="opsState"></div>
+  </nav>
 
-  <!-- recordings library -->
-  <div class="library" id="library" style="display:none">
-    <div class="lib-head">your recordings</div>
-    <div class="lib-list" id="libList"></div>
+  <div class="dash-wrap">
+    <main class="dash-main">
+      <section class="dash-panel dash-hero">
+        <div class="dash-kicker">new recording</div>
+        <div class="dash-title">Paste a Google Meet link and let Atom handle the session.</div>
+        <div class="dash-copy">Atom joins the Meet online, records audio and video, saves it to your library, and sends the finished recording to your Gmail.</div>
+        <div class="hero-card">
+          <input class="hero-input" id="heroUrl" type="url" placeholder="paste your Google Meet link" autocomplete="off" onkeydown="if(event.key==='Enter') joinMeeting()"/>
+          <div class="hero-footer">
+            <span class="hero-hint">gmeet link/invite -> join -> record -> send</span>
+            <button class="hero-btn" id="heroBtn" onclick="joinMeeting()">join, record, send</button>
+          </div>
+        </div>
+        <div class="flow-strip" aria-label="demo flow">
+          <div class="flow-step"><div class="k">01</div><div class="v">invite</div></div>
+          <div class="flow-step"><div class="k">02</div><div class="v">join</div></div>
+          <div class="flow-step"><div class="k">03</div><div class="v">record</div></div>
+          <div class="flow-step"><div class="k">04</div><div class="v">send</div></div>
+        </div>
+        <div class="ops-state" id="opsState"></div>
+      </section>
+
+      <section class="dash-panel dash-section">
+        <div class="library" id="library" style="display:none">
+          <div class="lib-head">your recordings</div>
+          <div class="lib-list" id="libList"></div>
+        </div>
+      </section>
+    </main>
+
+    <aside class="dash-side">
+      <section class="dash-panel profile-summary">
+        <div class="summary-id">
+          <div class="summary-avatar" id="summaryAvatar">A</div>
+          <div>
+            <div class="summary-name" id="summaryName">account</div>
+            <div class="summary-email" id="summaryEmail">signed in</div>
+          </div>
+        </div>
+        <div class="summary-stats">
+          <div class="summary-stat"><div class="v" id="summaryCount">0</div><div class="l">recordings</div></div>
+          <div class="summary-stat"><div class="v" id="summaryTime">0m</div><div class="l">total time</div></div>
+          <div class="summary-stat"><div class="v" id="summarySince">now</div><div class="l">member</div></div>
+        </div>
+        <button class="summary-btn" onclick="openCard()">open full profile</button>
+      </section>
+
+      <section class="dash-panel dash-section">
+        <div class="lib-head">system status</div>
+        <div class="ops-state ready" id="sideOpsState" style="display:block">checking Atom readiness</div>
+      </section>
+    </aside>
   </div>
 </div>
 
@@ -611,10 +698,13 @@ function setStatus(txt, _kind) { document.getElementById('recStatus').textConten
 function setHeadline(txt) { document.getElementById('recHeadline').textContent = txt; }
 function stripStage(text) { return String(text || '').replace(/^\[\d{2}s\]\s*/, ''); }
 function setOpsState(kind, text) {
-  const el = document.getElementById('opsState');
-  el.className = 'ops-state ' + kind;
-  el.textContent = text;
-  el.style.display = text ? 'block' : 'none';
+  for (const id of ['opsState', 'sideOpsState']) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.className = 'ops-state ' + kind;
+    el.textContent = text;
+    el.style.display = text ? 'block' : 'none';
+  }
 }
 function refreshOpsState() {
   if (!appConfig.google_client_id) {
@@ -706,9 +796,22 @@ function setLoginState(kind, status, note) {
 }
 
 function setProfile(username) {
-  document.getElementById('pcName').textContent = username;
-  document.getElementById('profileChip').style.display = 'flex';
+  const initial = (username || 'A')[0].toUpperCase();
+  document.getElementById('navName').textContent = username;
+  document.getElementById('summaryName').textContent = username;
+  document.getElementById('navAvatar').textContent = initial;
+  document.getElementById('summaryAvatar').textContent = initial;
   loggedIn = true;
+}
+
+function setDashboardProfile(data) {
+  if (!data || !data.authenticated) return;
+  setProfile(data.username);
+  document.getElementById('navEmail').textContent = data.email || 'signed in';
+  document.getElementById('summaryEmail').textContent = data.email || 'signed in';
+  document.getElementById('summaryCount').textContent = data.count ?? 0;
+  document.getElementById('summaryTime').textContent = fmtTotal(data.total_duration || 0);
+  document.getElementById('summarySince').textContent = fmtSince(data.created_at);
 }
 
 async function onGoogleCredential(resp) {
@@ -723,6 +826,7 @@ async function onGoogleCredential(resp) {
     setProfile(d.username);
     setLoginState('ready', 'signed in', 'Welcome to Atom.');
     hideLogin();
+    refreshDashboardProfile();
     loadLibrary();
     // Reconnect WS now that we have a session cookie (so the bot knows who we are)
     if (ws) { try { ws.close(); } catch(e){} ws=null; }
@@ -757,7 +861,14 @@ async function initApp() {
   // 2. Already signed in?
   try {
     const me = await (await apiFetch('/auth/me')).json();
-    if (me.authenticated) { setProfile(me.username); hideLogin(); loadLibrary(); ensureWS(); return; }
+    if (me.authenticated) {
+      setProfile(me.username);
+      hideLogin();
+      refreshDashboardProfile();
+      loadLibrary();
+      ensureWS();
+      return;
+    }
   } catch(e) {}
 
   // 3. Show login with the Google button
@@ -791,6 +902,7 @@ async function loadLibrary() {
     wrap.style.display='block';
     if (!d.items || !d.items.length) {
       list.innerHTML = `<div class="lib-empty">no recordings yet — paste a meet link above to start</div>`;
+      refreshDashboardProfile();
       return;
     }
     list.innerHTML = d.items.map(e => `
@@ -804,6 +916,7 @@ async function loadLibrary() {
         <a class="lib-dl" href="${mediaUrl(e.url)}" download="${e.filename}">↓</a>
         <button class="lib-del" onclick="deleteRec('${e.id}')" title="delete">✕</button>
       </div>`).join('');
+    refreshDashboardProfile();
   } catch(e) { console.error('loadLibrary', e); }
 }
 
@@ -839,6 +952,7 @@ async function refreshCard() {
   try {
     const d = await (await apiFetch('/profile')).json();
     if (!d.authenticated) return;
+    setDashboardProfile(d);
     document.getElementById('cardAvatar').textContent = (d.username||'?')[0].toUpperCase();
     document.getElementById('cardName').textContent = d.username;
     document.getElementById('cardEmail').textContent = d.email;
@@ -880,6 +994,13 @@ async function refreshCard() {
         </div>`).join('');
     }
   } catch(e) { console.error('refreshCard', e); }
+}
+
+async function refreshDashboardProfile() {
+  try {
+    const d = await (await apiFetch('/profile')).json();
+    setDashboardProfile(d);
+  } catch(e) { console.error('refreshDashboardProfile', e); }
 }
 
 // THEME
