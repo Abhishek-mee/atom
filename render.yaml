@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: atom
+    env: docker
+    plan: standard
+    healthCheckPath: /health
+    disk:
+      name: atom-data
+      mountPath: /app/data
+      sizeGB: 5
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: RECORD_MEETING
+        value: true
+      - key: REC_FORMAT
+        value: webm
+      - key: REC_WIDTH
+        value: 854
+      - key: REC_HEIGHT
+        value: 480
+      - key: COOKIE_SECURE
+        value: true
+      - key: COOKIE_SAMESITE
+        value: none
+      - key: CORS_ORIGINS
+        value: https://atom.abhishek-meena.in
+      - key: BROWSER_CHANNEL
+        value: ""
+      - key: ATOM_CONFIG_DIR
+        value: /app/data/config
+      - key: ATOM_DB_PATH
+        value: /app/data/atom.db
+      - key: RECORDINGS_DIR
+        value: /app/data/recordings
+      - key: DEBUG_DIR
+        value: /app/data/debug

@@ -1,0 +1,13 @@
+services:
+  atom:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - atom-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  atom-data:

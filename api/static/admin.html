@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>atom admin</title>
+<style>
+:root { color-scheme:light; --bg:#F5F3EE; --panel:#fff; --line:#DED8CD; --ink:#151311; --muted:#726C61; --accent:#C77A18; --green:#2C8A5E; --red:#C94839; --m:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; --f:Inter,system-ui,sans-serif; }
+* { box-sizing:border-box; }
+body { margin:0; min-height:100vh; display:grid; place-items:center; background:var(--bg); color:var(--ink); font-family:var(--f); padding:24px; }
+main { width:min(760px,100%); background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:22px; box-shadow:0 18px 50px rgba(24,20,12,.08); }
+h1 { margin:0; font-size:26px; letter-spacing:-.03em; }
+p { color:var(--muted); line-height:1.6; margin:8px 0 18px; }
+.token { display:flex; gap:8px; margin:18px 0; }
+input { flex:1; border:1px solid var(--line); border-radius:6px; padding:11px 12px; font:13px var(--m); }
+button { border:1px solid var(--line); border-radius:6px; background:#fff; color:var(--ink); padding:10px 13px; cursor:pointer; font:700 12px var(--m); }
+button.primary { background:var(--accent); color:#fff8ee; border-color:var(--accent); }
+button:hover { border-color:var(--accent); }
+.grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin:18px 0; }
+.card { border:1px solid var(--line); border-radius:8px; padding:14px; background:#F9F7F2; }
+.k { font:10px var(--m); text-transform:uppercase; letter-spacing:.12em; color:var(--muted); }
+.v { margin-top:7px; font-weight:800; font-size:18px; }
+.ok { color:var(--green); }
+.bad { color:var(--red); }
+pre { overflow:auto; background:#151311; color:#F5F3EE; border-radius:8px; padding:14px; font:12px/1.55 var(--m); }
+.actions { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0 18px; }
+@media (max-width:640px) { .grid { grid-template-columns:1fr; } .token { flex-direction:column; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>atom admin</h1>
+  <p>Use this page after deployment to verify user auth, database, Gmail delivery, and the bot Google profile used to join meetings.</p>
+
+  <div class="token">
+    <input id="token" type="password" placeholder="ADMIN_TOKEN"/>
+    <button onclick="refresh()">check</button>
+  </div>
+
+  <div class="grid" id="cards"></div>
+
+  <div class="actions">
+    <button class="primary" onclick="startAuth()">start bot Google sign-in</button>
+    <button onclick="resetAuth()">reset sign-in state</button>
+    <button onclick="clearAuth()">clear bot profile</button>
+    <button onclick="refresh()">refresh</button>
+  </div>
+
+  <pre id="out">loading...</pre>
+</main>
+<script>
+const out = document.getElementById('out');
+const cards = document.getElementById('cards');
+const tokenEl = document.getElementById('token');
+tokenEl.value = localStorage.getItem('atom-admin-token') || '';
+
+function headers() {
+  const token = tokenEl.value.trim();
+  localStorage.setItem('atom-admin-token', token);
+  return token ? {'X-Atom-Admin-Token': token} : {};
+}
+
+async function call(path, options={}) {
+  const res = await fetch(path, {...options, headers:{...headers(), ...(options.headers||{})}});
+  const data = await res.json();
+  out.textContent = JSON.stringify(data, null, 2);
+  return {res, data};
+}
+
+function yn(label, value) {
+  return `<div class="card"><div class="k">${label}</div><div class="v ${value?'ok':'bad'}">${value?'ready':'missing'}</div></div>`;
+}
+
+async function refresh() {
+  const ready = await fetch('/ready').then(r => r.json()).catch(e => ({error:String(e), checks:{}}));
+  cards.innerHTML = [
+    yn('database', ready.checks?.database),
+    yn('google user auth', ready.checks?.google_client_id),
+    yn('gmail delivery', ready.checks?.gmail),
+    yn('bot google profile', ready.checks?.bot_google_profile),
+  ].join('');
+  await call('/auth/status');
+}
+
+async function startAuth() { await call('/auth/start', {method:'POST'}); }
+async function resetAuth() { await call('/auth/reset', {method:'POST'}); }
+async function clearAuth() {
+  if (!confirm('Clear saved bot Google profile?')) return;
+  await call('/auth/clear', {method:'POST'});
+}
+
+refresh();
+</script>
+</body>
+</html>

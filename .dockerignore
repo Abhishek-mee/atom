@@ -1,0 +1,16 @@
+.venv*
+__pycache__
+*.pyc
+.git
+.claude
+config/chrome_profile
+config/chrome_profile_*
+api/static/recordings/*
+api/static/debug/*
+*.egg-info
+.env
+config/profile.json
+config/users.json
+config/sessions.json
+config/*.db
+config/*.db-*

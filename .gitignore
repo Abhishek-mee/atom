@@ -1,0 +1,21 @@
+.env
+config/google_credentials.json
+config/google_token.json
+__pycache__/
+*.py[cod]
+.venv/
+.venv2/
+dist/
+*.egg-info/
+
+# S3 credentials
+config/profile.json
+config/users.json
+config/sessions.json
+config/meet_auth.json
+config/recordings.json
+config/*.db
+config/*.db-*
+config/chrome_profile/
+api/static/debug/
+api/static/recordings/

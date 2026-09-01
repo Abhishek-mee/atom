@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>atom — meeting recorder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<script src="./config.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+:root {
+  --bg:#F5F3EE;
+  --bg2:#EEEAE1;
+  --panel:#FFFFFF;
+  --panel2:#F6F2EA;
+  --line:#DED8CD;
+  --ink:#151311;
+  --ink2:#43403A;
+  --muted:#726C61;
+  --faint:#A19A8E;
+  --accent:#C77A18;
+  --accent2:#8F5C12;
+  --red:#C94839;
+  --green:#2C8A5E;
+  --btnink:#FFF8EE;
+  --shadow:0 18px 50px rgba(24, 20, 12, .08);
+  --f:'Inter',system-ui,sans-serif;
+  --m:'JetBrains Mono',ui-monospace,monospace;
+  --radius:8px;
+}
+html[data-theme="light"] {
+  --bg:#F5F3EE;
+  --bg2:#EEEAE1;
+  --panel:#FFFFFF;
+  --panel2:#F6F2EA;
+  --line:#DED8CD;
+  --ink:#151311;
+  --ink2:#43403A;
+  --muted:#726C61;
+  --faint:#A19A8E;
+  --accent:#C77A18;
+  --accent2:#8F5C12;
+  --red:#C94839;
+  --green:#2C8A5E;
+  --btnink:#FFF8EE;
+  --shadow:0 18px 50px rgba(24, 20, 12, .08);
+}
+html { transition:background .3s; }
+* { box-sizing:border-box; margin:0; padding:0; }
+html,body { min-height:100%; background:var(--bg); color:var(--ink); font-family:var(--f); font-size:14px; -webkit-font-smoothing:antialiased; }
+body::before { content:''; position:fixed; inset:0; z-index:0; pointer-events:none;
+  background:
+    linear-gradient(to bottom, rgba(255,255,255,.55), rgba(255,255,255,0) 22%),
+    radial-gradient(circle at top left, rgba(199,122,24,.07), transparent 34%),
+    radial-gradient(circle at 80% 0%, rgba(143,92,18,.05), transparent 24%),
+    linear-gradient(var(--line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line) 1px, transparent 1px);
+  background-size:auto,auto,auto,28px 28px,28px 28px;
+  opacity:.35;
+}
+body > * { position:relative; z-index:1; }
+.mono { font-family:var(--m); }
+
+/* IDLE */
+#idle { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; transition:opacity .4s, transform .4s; z-index:10; padding:28px 18px; }
+#idle.out { opacity:0; transform:translateY(-12px); pointer-events:none; }
+.hero-logo { display:flex; flex-direction:column; align-items:center; gap:12px; margin-bottom:28px; }
+.hero-mark { width:44px; height:44px; }
+.hero-mark rect[fill="#0F0F0F"]{ fill:var(--accent); } .hero-mark rect[fill="#ECEAE4"]{ fill:var(--bg); }
+.hero-name { font-size:34px; font-weight:800; letter-spacing:-2px; text-align:center; }
+.hero-sub  { font-family:var(--m); font-size:10px; letter-spacing:2px; text-transform:uppercase; color:var(--muted); margin-top:4px; text-align:center; }
+.hero-card { width:min(660px, calc(100vw - 24px)); background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; box-shadow:var(--shadow); position:relative; }
+.hero-card::before { content:'new session'; position:absolute; top:11px; left:14px; font-family:var(--m); font-size:8.5px; letter-spacing:1.8px; color:var(--faint); text-transform:uppercase; }
+.hero-input { width:100%; border:none; outline:none; background:transparent; font-family:var(--f); font-size:18px; color:var(--ink); padding:38px 16px 16px; caret-color:var(--accent); }
+.hero-input::placeholder { color:var(--faint); }
+.flow-strip { width:min(660px, calc(100vw - 24px)); display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1px; margin:14px 0 0; border:1px solid var(--line); border-radius:8px; overflow:hidden; box-shadow:var(--shadow); }
+.flow-step { background:var(--panel); padding:12px 10px; text-align:center; }
+.flow-step .k { font-family:var(--m); font-size:8px; letter-spacing:1.5px; text-transform:uppercase; color:var(--faint); }
+.flow-step .v { margin-top:4px; font-size:13px; font-weight:700; color:var(--ink2); }
+.hero-footer { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:0 12px 12px; }
+.hero-hint { font-family:var(--m); font-size:10px; color:var(--faint); }
+.hero-btn { background:var(--accent); color:var(--btnink); border:none; border-radius:6px; font-family:var(--m); font-size:11px; font-weight:700; letter-spacing:.5px; padding:11px 16px; cursor:pointer; transition:all .15s; }
+.hero-btn:hover { background:var(--accent2); box-shadow:0 12px 26px rgba(199,122,24,.22); }
+.hero-btn:disabled { opacity:.35; cursor:not-allowed; }
+.hero-sub2 { font-family:var(--m); margin-top:16px; font-size:10px; letter-spacing:.5px; color:var(--faint); text-align:center; max-width:520px; line-height:1.8; }
+.ops-state { display:none; margin-top:12px; width:min(660px, calc(100vw - 24px)); font-family:var(--m); font-size:10px; color:var(--muted); background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px; text-align:center; line-height:1.6; box-shadow:var(--shadow); }
+.ops-state.ready { color:var(--green); border-color:rgba(44,138,94,.35); }
+.ops-state.warn { color:var(--accent); border-color:rgba(199,122,24,.35); }
+.ops-state.bad { color:var(--red); border-color:rgba(201,72,57,.35); }
+@keyframes spin { to { transform:rotate(360deg); } }
+
+/* login gate */
+#login { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; overflow-y:auto; background:var(--bg); z-index:50; transition:opacity .3s; padding:28px 18px; }
+#login.hide { opacity:0; pointer-events:none; }
+.login-shell { width:min(1200px, 100%); display:grid; grid-template-columns:minmax(0,1.05fr) minmax(360px,.95fr); gap:18px; align-items:stretch; }
+.login-copy, .pricing-panel { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow); }
+.login-copy { padding:28px; display:flex; flex-direction:column; justify-content:space-between; min-height:560px; }
+.login-card { display:flex; flex-direction:column; align-items:flex-start; gap:10px; max-width:560px; }
+.login-mark { width:52px; height:52px; margin-bottom:2px; }
+.login-mark rect[fill="#0F0F0F"]{ fill:var(--accent); } .login-mark rect[fill="#ECEAE4"]{ fill:var(--bg); }
+.login-name { font-size:54px; line-height:1; font-weight:800; letter-spacing:-3px; }
+.login-sub { font-family:var(--m); font-size:10px; letter-spacing:2px; text-transform:uppercase; color:var(--muted); }
+.login-lead { margin-top:4px; max-width:520px; font-size:16px; line-height:1.6; color:var(--ink2); }
+.login-points { display:flex; flex-wrap:wrap; gap:10px; margin-top:18px; }
+.login-point { font-family:var(--m); font-size:10px; letter-spacing:.8px; text-transform:uppercase; color:var(--ink2); background:var(--panel2); border:1px solid var(--line); border-radius:999px; padding:9px 12px; }
+#gsi { min-height:44px; display:flex; justify-content:flex-start; margin-top:18px; }
+.login-note { font-family:var(--m); font-size:10px; color:var(--faint); margin-top:14px; max-width:420px; line-height:1.8; letter-spacing:.3px; }
+.login-meter { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-top:24px; }
+.login-metric { background:var(--panel2); border:1px solid var(--line); border-radius:var(--radius); padding:12px 14px; }
+.login-metric .v { font-size:20px; font-weight:800; letter-spacing:-1px; }
+.login-metric .l { font-family:var(--m); font-size:8px; letter-spacing:1.4px; text-transform:uppercase; color:var(--faint); margin-top:4px; }
+
+/* pricing */
+.pricing-panel { padding:22px; display:flex; flex-direction:column; justify-content:space-between; }
+.pricing-wrap { width:100%; margin-top:0; }
+.pricing-head { font-family:var(--m); font-size:9.5px; letter-spacing:2px; text-transform:uppercase; color:var(--muted); margin-bottom:12px; display:flex; align-items:center; gap:8px; }
+.pricing-head::after { content:''; flex:1; height:1px; background:var(--line); }
+.pricing-grid { display:grid; grid-template-columns:repeat(1, minmax(0, 1fr)); gap:10px; }
+.price-card { background:var(--panel2); border:1px solid var(--line); border-radius:var(--radius); padding:16px; position:relative; overflow:hidden; }
+.price-card.featured { border-color:rgba(232,163,61,.45); box-shadow:0 0 0 1px rgba(232,163,61,.12) inset; }
+.price-card.featured::before { content:'most popular'; position:absolute; top:10px; right:10px; font-family:var(--m); font-size:8px; letter-spacing:1.5px; text-transform:uppercase; color:var(--accent); }
+.price-name { font-family:var(--m); font-size:9px; letter-spacing:2px; text-transform:uppercase; color:var(--muted); }
+.price-amt { margin-top:10px; font-size:32px; font-weight:800; letter-spacing:-2px; color:var(--ink); }
+.price-amt span { font-family:var(--m); font-size:10px; color:var(--muted); letter-spacing:0; font-weight:500; }
+.price-sub { font-family:var(--m); font-size:10px; color:var(--faint); margin-top:4px; min-height:28px; line-height:1.6; }
+.price-list { list-style:none; margin-top:14px; display:flex; flex-direction:column; gap:8px; }
+.price-list li { font-family:var(--m); font-size:10px; color:var(--ink2); padding-left:14px; position:relative; line-height:1.4; }
+.price-list li::before { content:'-'; position:absolute; left:0; top:0; color:var(--accent); }
+.pricing-foot { margin-top:14px; font-family:var(--m); font-size:10px; color:var(--faint); letter-spacing:.3px; text-align:left; line-height:1.7; }
+@media (max-width: 900px) {
+  .login-shell { grid-template-columns:1fr; }
+  .login-copy { min-height:auto; }
+  .login-meter { grid-template-columns:1fr; }
+  .pricing-grid { grid-template-columns:1fr; }
+  .flow-strip { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+
+/* profile chip */
+.profile-chip { position:fixed; top:18px; right:18px; display:flex; align-items:center; gap:8px; z-index:20; }
+.pc-name { font-family:var(--m); font-size:11px; font-weight:500; color:var(--accent); background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:7px 12px; cursor:pointer; transition:border-color .15s, transform .15s; box-shadow:var(--shadow); }
+.pc-name:hover { border-color:var(--accent); }
+.pc-name .at { color:var(--faint); }
+.pc-logout { font-family:var(--m); font-size:10px; letter-spacing:.5px; color:var(--muted); background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:7px 11px; cursor:pointer; transition:all .15s; box-shadow:var(--shadow); }
+.pc-logout:hover { border-color:var(--red); color:var(--red); }
+
+/* profile card (slide-over) */
+.pcard-backdrop { position:fixed; inset:0; background:rgba(21,19,17,.48); z-index:70; display:none; opacity:0; transition:opacity .25s; backdrop-filter:blur(4px); }
+.pcard-backdrop.open { display:block; opacity:1; }
+.pcard { position:fixed; top:0; right:0; height:100vh; width:420px; max-width:100vw; background:var(--panel); border-left:1px solid var(--line); z-index:71; transform:translateX(100%); transition:transform .3s cubic-bezier(.4,0,.2,1); display:flex; flex-direction:column; box-shadow:-24px 0 50px rgba(24,20,12,.08); }
+.pcard.open { transform:none; }
+.pcard-head { padding:24px 22px 20px; border-bottom:1px solid var(--line); }
+.pcard-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:18px; }
+.pcard-title { font-family:var(--m); font-size:10px; letter-spacing:2px; text-transform:uppercase; color:var(--muted); }
+.pcard-close { background:transparent; border:1px solid var(--line); color:var(--muted); width:28px; height:28px; border-radius:6px; cursor:pointer; font-size:13px; transition:all .15s; }
+.pcard-close:hover { border-color:var(--accent); color:var(--accent); }
+.pcard-id { display:flex; align-items:center; gap:14px; }
+.pcard-avatar { width:52px; height:52px; border-radius:8px; background:var(--bg); border:1px solid var(--line); display:flex; align-items:center; justify-content:center; font-size:22px; font-weight:700; color:var(--accent); flex-shrink:0; }
+.pcard-uname { font-size:18px; font-weight:700; letter-spacing:-.5px; }
+.pcard-email { font-family:var(--m); font-size:11px; color:var(--muted); margin-top:2px; }
+.pcard-stats { display:flex; gap:1px; margin-top:20px; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+.pcard-stat { flex:1; padding:12px; background:var(--panel2); text-align:center; }
+.pcard-stat .v { font-family:var(--m); font-size:18px; font-weight:700; color:var(--ink); }
+.pcard-stat .l { font-family:var(--m); font-size:8px; letter-spacing:1.5px; text-transform:uppercase; color:var(--faint); margin-top:3px; }
+.pcard-body { flex:1; overflow-y:auto; padding:18px 22px; }
+.pcard-body::-webkit-scrollbar { width:3px; } .pcard-body::-webkit-scrollbar-thumb { background:var(--line); }
+.pcard-sec { font-family:var(--m); font-size:9px; letter-spacing:2px; text-transform:uppercase; color:var(--muted); margin:6px 0 10px; display:flex; align-items:center; gap:8px; }
+.pcard-sec::after { content:''; flex:1; height:1px; background:var(--line); }
+.sess { display:flex; align-items:center; gap:11px; padding:10px 0; border-bottom:1px solid var(--line); }
+.sess:last-child { border-bottom:none; }
+.sess-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; background:var(--faint); }
+.sess-dot.live { background:var(--red); box-shadow:0 0 8px var(--red); animation:pulse 1.2s infinite; }
+.sess-dot.done { background:var(--green); }
+.sess-info { flex:1; min-width:0; }
+.sess-title { font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sess-meta { font-family:var(--m); font-size:9.5px; color:var(--muted); margin-top:1px; }
+.sess-act { display:flex; gap:4px; }
+.sess-act a, .sess-act button { font-family:var(--m); font-size:10px; text-decoration:none; color:var(--ink2); background:transparent; border:1px solid var(--line); border-radius:3px; padding:4px 8px; cursor:pointer; transition:all .15s; }
+.sess-act a:hover { border-color:var(--accent); color:var(--accent); }
+.sess-act .del:hover { border-color:var(--red); color:var(--red); }
+.pcard-empty { font-family:var(--m); font-size:11px; color:var(--faint); padding:12px 0; }
+
+/* library */
+.library { margin-top:34px; width:min(920px, calc(100vw - 24px)); }
+.lib-head { font-family:var(--m); font-size:9.5px; font-weight:600; letter-spacing:2px; text-transform:uppercase; color:var(--muted); margin-bottom:12px; display:flex; align-items:center; gap:8px; }
+.lib-head::after { content:''; flex:1; height:1px; background:var(--line); }
+.lib-list { display:flex; flex-direction:column; gap:6px; max-height:40vh; overflow-y:auto; }
+.lib-list::-webkit-scrollbar { width:3px; } .lib-list::-webkit-scrollbar-thumb { background:var(--line); }
+.lib-card { display:flex; align-items:center; gap:12px; padding:11px 13px; background:var(--panel); border:1px solid var(--line); border-radius:8px; transition:all .15s; box-shadow:var(--shadow); }
+.lib-card:hover { border-color:rgba(199,122,24,.45); background:var(--panel2); }
+.lib-icon { width:30px; height:30px; flex-shrink:0; border-radius:6px; background:var(--bg); border:1px solid var(--line); color:var(--accent); display:flex; align-items:center; justify-content:center; font-size:10px; text-decoration:none; }
+.lib-info { flex:1; min-width:0; }
+.lib-title { font-size:13px; font-weight:600; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.lib-meta { font-family:var(--m); font-size:10px; color:var(--muted); margin-top:2px; letter-spacing:.3px; }
+.lib-play { font-family:var(--m); font-size:10px; font-weight:600; letter-spacing:.5px; text-decoration:none; color:var(--ink2); padding:6px 11px; border:1px solid var(--line); border-radius:6px; transition:all .15s; background:var(--panel); }
+.lib-play:hover { border-color:var(--accent); color:var(--accent); }
+.lib-dl { font-size:14px; text-decoration:none; color:var(--muted); padding:4px 8px; border-radius:6px; transition:color .15s; }
+.lib-dl:hover { color:var(--accent); }
+.lib-del { font-size:11px; color:var(--faint); background:transparent; border:none; cursor:pointer; padding:4px 7px; border-radius:3px; transition:color .15s; }
+.lib-del:hover { color:var(--red); }
+.lib-empty { font-family:var(--m); font-size:11px; color:var(--faint); padding:16px 2px; letter-spacing:.3px; }
+
+/* APP */
+#app { display:flex; flex-direction:column; min-height:100vh; opacity:0; transform:translateY(8px); pointer-events:none; transition:opacity .4s .1s, transform .4s .1s; }
+#app.in { opacity:1; transform:none; pointer-events:all; }
+.topbar { display:flex; align-items:center; justify-content:space-between; padding:0 16px; height:58px; border-bottom:1px solid var(--line); background:rgba(255,255,255,.82); backdrop-filter:blur(10px); flex-shrink:0; box-shadow:0 1px 0 rgba(255,255,255,.5) inset; }
+.top-left { display:flex; align-items:center; gap:9px; }
+.home-link { cursor:pointer; border-radius:8px; padding:6px 8px; margin-left:-7px; transition:background .15s; }
+.home-link:hover { background:var(--panel2); }
+.home-btn { font-family:var(--m); font-size:10px; font-weight:600; letter-spacing:.5px; padding:7px 12px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--ink2); cursor:pointer; transition:all .15s; }
+.home-btn:hover { border-color:var(--accent); color:var(--accent); }
+.top-mark { width:20px; height:20px; }
+.top-mark rect[fill="#0F0F0F"]{ fill:var(--accent); } .top-mark rect[fill="#ECEAE4"]{ fill:var(--panel); }
+.top-name { font-size:14px; font-weight:700; letter-spacing:-.5px; }
+.top-url { font-family:var(--m); font-size:10px; color:var(--muted); background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:4px 10px; max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.top-right { display:flex; align-items:center; gap:8px; }
+
+/* recording chip */
+.rec-chip { display:flex; align-items:center; gap:6px; font-family:var(--m); font-size:10px; font-weight:600; letter-spacing:1px; text-transform:uppercase; padding:5px 11px; border-radius:6px; border:1px solid var(--line); color:var(--muted); background:var(--panel); transition:all .3s; }
+.rec-chip .rdot { width:7px; height:7px; border-radius:50%; background:var(--faint); }
+.rec-chip.on { color:var(--red); border-color:rgba(255,77,77,.4); }
+.rec-chip.on .rdot { background:var(--red); box-shadow:0 0 8px var(--red); animation:pulse 1.2s infinite; }
+@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.3; } }
+.leave-btn { font-family:var(--m); font-size:10px; font-weight:600; letter-spacing:.5px; padding:6px 12px; border-radius:6px; border:1px solid rgba(255,77,77,.4); background:transparent; color:var(--red); cursor:pointer; transition:all .15s; }
+.leave-btn:hover { background:rgba(255,77,77,.12); }
+
+/* stage */
+.stage { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:30px; padding:40px 18px; overflow-y:auto; }
+
+/* recording in progress */
+.rec-state { display:flex; flex-direction:column; align-items:center; gap:22px; text-align:center; width:min(760px,100%); }
+.rec-orb { position:relative; width:108px; height:108px; display:flex; align-items:center; justify-content:center; }
+.rec-orb .ring { position:absolute; inset:0; border-radius:50%; border:1px solid var(--line); }
+.rec-orb.live .ring { border-color:rgba(255,77,77,.4); animation:ring 1.6s infinite; }
+@keyframes ring { 0% { transform:scale(.8); opacity:.9; } 100% { transform:scale(1.4); opacity:0; } }
+.rec-orb .core { width:46px; height:46px; border-radius:50%; background:var(--faint); transition:all .3s; }
+.rec-orb.live .core { background:var(--red); box-shadow:0 0 30px rgba(255,77,77,.7); }
+.rec-headline { font-size:26px; font-weight:800; letter-spacing:-1px; color:var(--ink); }
+.rec-statusline { font-family:var(--m); font-size:11px; color:var(--accent); letter-spacing:.5px; }
+.rec-meta { display:flex; gap:1px; margin-top:8px; border:1px solid var(--line); border-radius:8px; overflow:hidden; box-shadow:var(--shadow); }
+.meta-block { display:flex; flex-direction:column; align-items:center; gap:5px; padding:14px 26px; background:var(--panel); }
+.meta-label { font-family:var(--m); font-size:8.5px; font-weight:600; letter-spacing:1.5px; text-transform:uppercase; color:var(--faint); }
+.meta-value { font-family:var(--m); font-size:22px; font-weight:700; color:var(--ink); font-variant-numeric:tabular-nums; }
+.meta-value.sm { font-size:14px; font-weight:500; color:var(--ink2); }
+.progress-log { width:min(760px,100%); display:flex; flex-direction:column; gap:8px; text-align:left; }
+.progress-head { font-family:var(--m); font-size:9px; letter-spacing:2px; text-transform:uppercase; color:var(--muted); display:flex; align-items:center; gap:8px; }
+.progress-head::after { content:''; flex:1; height:1px; background:var(--line); }
+.progress-list { display:flex; flex-direction:column; gap:6px; }
+.progress-item { display:flex; align-items:flex-start; gap:10px; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px; box-shadow:var(--shadow); }
+.progress-time { font-family:var(--m); font-size:9px; color:var(--accent); letter-spacing:.4px; flex-shrink:0; min-width:48px; padding-top:1px; }
+.progress-msg { font-size:13px; color:var(--ink2); line-height:1.45; }
+
+/* result */
+.result { width:100%; max-width:760px; display:flex; flex-direction:column; align-items:center; gap:20px; }
+.result-badge { display:inline-flex; align-items:center; gap:7px; font-family:var(--m); font-size:9.5px; font-weight:600; letter-spacing:1.5px; text-transform:uppercase; color:var(--green); background:rgba(67,214,155,.08); border:1px solid rgba(67,214,155,.3); border-radius:3px; padding:5px 12px; }
+.result-badge::before { content:''; width:5px; height:5px; border-radius:50%; background:var(--green); box-shadow:0 0 8px var(--green); }
+.result-video { width:100%; border-radius:8px; border:1px solid var(--line); background:#000; box-shadow:var(--shadow); }
+.result-actions { display:flex; align-items:center; gap:12px; }
+.dl-btn { display:inline-flex; align-items:center; gap:7px; font-family:var(--m); font-size:12px; font-weight:700; letter-spacing:.5px; text-decoration:none; padding:11px 22px; border-radius:6px; background:var(--accent); color:var(--btnink); transition:all .15s; }
+.dl-btn:hover { background:var(--accent2); box-shadow:0 12px 26px rgba(199,122,24,.22); }
+.again-btn { font-family:var(--m); font-size:11px; font-weight:600; letter-spacing:.5px; padding:11px 18px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--ink2); cursor:pointer; transition:all .15s; }
+.again-btn:hover { border-color:var(--accent); color:var(--accent); }
+.result-hint { font-family:var(--m); font-size:10px; color:var(--faint); letter-spacing:.3px; }
+.delivery-state { font-family:var(--m); font-size:10px; color:var(--muted); border:1px solid var(--line); border-radius:6px; padding:8px 12px; background:var(--panel); }
+.delivery-state.sent { color:var(--green); border-color:rgba(44,138,94,.35); }
+.delivery-state.failed { color:var(--red); border-color:rgba(201,72,57,.35); }
+
+/* theme toggle */
+.theme-toggle { position:fixed; bottom:18px; right:18px; z-index:60; width:40px; height:40px; border-radius:8px; border:1px solid var(--line); background:var(--panel); color:var(--ink2); cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:15px; transition:all .15s; box-shadow:var(--shadow); }
+.theme-toggle:hover { border-color:var(--accent); color:var(--accent); }
+</style>
+</head>
+<body>
+
+<button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="toggle theme">☾</button>
+
+<!-- PROFILE CARD -->
+<div class="pcard-backdrop" id="pcardBackdrop" onclick="closeCard()"></div>
+<aside class="pcard" id="pcard">
+  <div class="pcard-head">
+    <div class="pcard-top">
+      <span class="pcard-title">profile</span>
+      <button class="pcard-close" onclick="closeCard()">✕</button>
+    </div>
+    <div class="pcard-id">
+      <div class="pcard-avatar" id="cardAvatar">—</div>
+      <div>
+        <div class="pcard-uname"><span style="color:var(--faint)">@</span><span id="cardName">—</span></div>
+        <div class="pcard-email" id="cardEmail">—</div>
+      </div>
+    </div>
+    <div class="pcard-stats">
+      <div class="pcard-stat"><div class="v" id="cardCount">0</div><div class="l">recordings</div></div>
+      <div class="pcard-stat"><div class="v" id="cardTime">0m</div><div class="l">total time</div></div>
+      <div class="pcard-stat"><div class="v" id="cardSince">—</div><div class="l">member since</div></div>
+    </div>
+  </div>
+  <div class="pcard-body">
+    <div id="cardActiveSec" style="display:none">
+      <div class="pcard-sec">recording now</div>
+      <div id="cardActive"></div>
+    </div>
+    <div class="pcard-sec">all sessions</div>
+    <div id="cardSessions"></div>
+  </div>
+</aside>
+
+<!-- LOGIN GATE -->
+<div id="login">
+  <div class="login-shell">
+    <section class="login-copy">
+      <div class="login-card">
+        <svg class="login-mark" viewBox="0 0 32 32" fill="none">
+          <rect x="12" y="0" width="8" height="4" fill="#0F0F0F"/><rect x="12" y="28" width="8" height="4" fill="#0F0F0F"/>
+          <rect x="0" y="12" width="4" height="8" fill="#0F0F0F"/><rect x="28" y="12" width="4" height="8" fill="#0F0F0F"/>
+          <rect x="4" y="4" width="24" height="24" fill="#0F0F0F"/><rect x="8" y="8" width="16" height="16" fill="#ECEAE4"/>
+          <rect x="12" y="12" width="8" height="8" fill="#0F0F0F"/>
+        </svg>
+        <div class="login-sub">brandable meeting recorder</div>
+        <div class="login-name">atom</div>
+        <div class="login-lead">
+          Atom demonstrates the core loop first: give it a Google Meet invite, it joins by itself,
+          records the meeting, then sends the finished recording to your Gmail.
+        </div>
+        <div class="login-points">
+          <span class="login-point">gmeet invite</span>
+          <span class="login-point">auto join</span>
+          <span class="login-point">audio + video recording</span>
+          <span class="login-point">email delivery</span>
+        </div>
+        <div id="gsi"></div>
+        <div class="login-note" id="loginNote">continue with Google to create your profile and keep your recordings tied to your email.</div>
+      </div>
+      <div class="login-meter">
+        <div class="login-metric"><div class="v">01</div><div class="l">paste invite</div></div>
+        <div class="login-metric"><div class="v">02</div><div class="l">bot joins</div></div>
+        <div class="login-metric"><div class="v">03</div><div class="l">gmail send</div></div>
+      </div>
+    </section>
+    <section class="pricing-panel">
+      <div class="pricing-head">core demo</div>
+      <div class="pricing-grid">
+        <div class="price-card">
+          <div class="price-name">input</div>
+          <div class="price-amt">invite</div>
+          <div class="price-sub">paste any Google Meet link</div>
+          <ul class="price-list">
+            <li>meet.google.com links</li>
+            <li>calendar invite links</li>
+            <li>signed-in user profile</li>
+          </ul>
+        </div>
+        <div class="price-card featured">
+          <div class="price-name">agent</div>
+          <div class="price-amt">join</div>
+          <div class="price-sub">Atom enters the call and records</div>
+          <ul class="price-list">
+            <li>Playwright Meet bot</li>
+            <li>audio + video capture</li>
+            <li>auto-leave when done</li>
+          </ul>
+        </div>
+        <div class="price-card">
+          <div class="price-name">output</div>
+          <div class="price-amt">send</div>
+          <div class="price-sub">the finished file is delivered</div>
+          <ul class="price-list">
+            <li>Gmail SMTP delivery</li>
+            <li>MP4 download fallback</li>
+            <li>recording library</li>
+          </ul>
+        </div>
+      </div>
+      <div class="pricing-foot">The first demo proves the core ability chain before adding transcript, summary, calendar, or paid-plan surfaces.</div>
+    </section>
+  </div>
+</div>
+<!-- IDLE -->
+<div id="idle">
+  <div class="profile-chip" id="profileChip" style="display:none">
+    <span class="pc-name" onclick="openCard()" title="view profile &amp; sessions"><span class="at">@</span><span id="pcName">—</span></span>
+    <button class="pc-logout" onclick="logout()">log out</button>
+  </div>
+  <div class="hero-logo">
+    <svg class="hero-mark" viewBox="0 0 32 32" fill="none">
+      <rect x="12" y="0" width="8" height="4" fill="#0F0F0F"/><rect x="12" y="28" width="8" height="4" fill="#0F0F0F"/>
+      <rect x="0" y="12" width="4" height="8" fill="#0F0F0F"/><rect x="28" y="12" width="4" height="8" fill="#0F0F0F"/>
+      <rect x="4" y="4" width="24" height="24" fill="#0F0F0F"/><rect x="8" y="8" width="16" height="16" fill="#ECEAE4"/>
+      <rect x="12" y="12" width="8" height="8" fill="#0F0F0F"/>
+    </svg>
+    <div>
+      <div class="hero-name">atom</div>
+      <div class="hero-sub">gmeet invite to gmail recording</div>
+    </div>
+  </div>
+  <div class="hero-card">
+    <input class="hero-input" id="heroUrl" type="url" placeholder="paste your Google Meet link" autocomplete="off" onkeydown="if(event.key==='Enter') joinMeeting()"/>
+    <div class="hero-footer">
+      <span class="hero-hint">gmeet link/invite -> join -> record -> send</span>
+      <button class="hero-btn" id="heroBtn" onclick="joinMeeting()">join, record, send</button>
+    </div>
+  </div>
+  <div class="flow-strip" aria-label="demo flow">
+    <div class="flow-step"><div class="k">01</div><div class="v">invite</div></div>
+    <div class="flow-step"><div class="k">02</div><div class="v">join</div></div>
+    <div class="flow-step"><div class="k">03</div><div class="v">record</div></div>
+    <div class="flow-step"><div class="k">04</div><div class="v">send</div></div>
+  </div>
+  <div class="hero-sub2">Atom joins the Meet by itself, records audio and video, then sends the finished recording to your Gmail and keeps it in your library.</div>
+  <div class="ops-state" id="opsState"></div>
+
+  <!-- recordings library -->
+  <div class="library" id="library" style="display:none">
+    <div class="lib-head">your recordings</div>
+    <div class="lib-list" id="libList"></div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app">
+  <div class="topbar">
+    <div class="top-left home-link" onclick="goHome()" title="back to home">
+      <svg class="top-mark" viewBox="0 0 32 32" fill="none">
+        <rect x="12" y="0" width="8" height="4" fill="#0F0F0F"/><rect x="12" y="28" width="8" height="4" fill="#0F0F0F"/>
+        <rect x="0" y="12" width="4" height="8" fill="#0F0F0F"/><rect x="28" y="12" width="4" height="8" fill="#0F0F0F"/>
+        <rect x="4" y="4" width="24" height="24" fill="#0F0F0F"/><rect x="8" y="8" width="16" height="16" fill="#ECEAE4"/>
+        <rect x="12" y="12" width="8" height="8" fill="#0F0F0F"/>
+      </svg>
+      <span class="top-name">atom</span>
+      <span class="top-url" id="topUrl">—</span>
+    </div>
+    <div class="top-right">
+      <div class="rec-chip" id="recChip"><div class="rdot"></div><span id="recLabel">connecting</span></div>
+      <button class="home-btn" onclick="goHome()">home</button>
+      <button class="leave-btn" onclick="leaveMeeting()">stop & save</button>
+    </div>
+  </div>
+
+  <div class="stage">
+    <!-- recording in progress -->
+    <div class="rec-state" id="recState">
+      <div class="rec-orb" id="recOrb"><div class="ring"></div><div class="core"></div></div>
+      <div>
+        <div class="rec-headline" id="recHeadline">getting ready</div>
+        <div class="rec-statusline" id="recStatus">initialising</div>
+      </div>
+      <div class="rec-meta">
+        <div class="meta-block"><div class="meta-label">duration</div><div class="meta-value" id="durVal">0:00</div></div>
+        <div class="meta-block"><div class="meta-label">participants</div><div class="meta-value sm" id="paxVal">—</div></div>
+      </div>
+      <div class="progress-log" id="progressLogWrap" style="display:none">
+        <div class="progress-head">stage trace</div>
+        <div class="progress-list" id="progressLog"></div>
+      </div>
+    </div>
+
+    <!-- result -->
+    <div class="result" id="result" style="display:none">
+      <div class="result-badge">recording ready</div>
+      <video class="result-video" id="resultVideo" controls preload="metadata"></video>
+      <div class="result-actions">
+        <a class="dl-btn" id="dlBtn" href="#" download="atom-meeting.mp4">download mp4</a>
+        <button class="again-btn" onclick="goHome()">record another</button>
+      </div>
+      <div class="delivery-state" id="deliveryState">gmail delivery pending</div>
+      <div class="result-hint">full meeting recording - audio + video</div>
+    </div>
+  </div>
+</div>
+
+<script>
+let ws=null, timerID=null, timerStart=null, pendingUrl=null, wsRetry=0, loggedIn=false;
+let appConfig={google_client_id:'', gmail_enabled:false, auth_ready:false};
+let stageTrail=[];
+const API_BASE = (window.ATOM_API_BASE || '').replace(/\/$/, '');
+
+function apiUrl(path) {
+  if (!API_BASE) return path;
+  return API_BASE + (path.startsWith('/') ? path : '/' + path);
+}
+
+function mediaUrl(url) {
+  if (!url || url.startsWith('http://') || url.startsWith('https://')) return url;
+  return apiUrl(url);
+}
+
+function apiFetch(path, options={}) {
+  return fetch(apiUrl(path), {credentials:'include', ...options});
+}
+
+function ensureWS() {
+  if (ws && (ws.readyState===WebSocket.OPEN || ws.readyState===WebSocket.CONNECTING)) return;
+  let wsBase;
+  if (API_BASE) {
+    const api = new URL(API_BASE);
+    api.protocol = api.protocol === 'https:' ? 'wss:' : 'ws:';
+    wsBase = api.origin;
+  } else {
+    const proto = location.protocol==='https:' ? 'wss' : 'ws';
+    wsBase = `${proto}://${location.host}`;
+  }
+  ws = new WebSocket(`${wsBase}/ws`);
+  ws.onopen    = () => { wsRetry=0; if (pendingUrl) { ws.send(JSON.stringify({action:'join',url:pendingUrl})); pendingUrl=null; } };
+  ws.onmessage = e => handle(JSON.parse(e.data));
+  ws.onclose   = () => {
+    ws=null;
+    // Auto-reconnect with backoff while the user is logged in
+    if (loggedIn && wsRetry < 5) {
+      wsRetry++;
+      setTimeout(ensureWS, Math.min(1000*wsRetry, 4000));
+    }
+  };
+  ws.onerror   = () => {};
+}
+
+function handle(m) {
+  if (m.type==='status') {
+    const t = m.message.toLowerCase();
+    setStatus(m.message);
+    pushStage(m.message);
+    if (t.includes('recording'))     { setRec(true); startTimer(); }
+    if (t.includes('wrapping')||t.includes('everyone left')||t.includes('saving')||t.includes('stopping')) { setRec(false); stopTimer(); setHeadline('finishing up…'); }
+  }
+  if (m.type==='participant_count') setPax(m.count);
+  if (m.type==='recording') {
+    // Only pop the result view if the user is still in the app view;
+    // if they've gone home, just refresh the library quietly.
+    if (document.getElementById('app').classList.contains('in')) showResult(m.entry);
+    loadLibrary();
+  }
+  if (m.type==='error') { setStatus('⚠ '+m.message); setRec(false); }
+}
+
+function joinMeeting() {
+  const url=(document.getElementById('heroUrl').value||'').trim();
+  if (!appConfig.auth_ready) {
+    setOpsState('warn', 'bot Google profile is not ready - open /admin after deployment and complete bot sign-in');
+    return;
+  }
+  if (!url || !url.includes('meet.google.com')) {
+    const inp=document.getElementById('heroUrl');
+    inp.style.outline='2px solid var(--red)'; setTimeout(()=>inp.style.outline='',1500); return;
+  }
+  document.getElementById('topUrl').textContent = url.replace('https://','');
+  showApp(); setStatus('connecting…'); setHeadline('joining meeting…');
+  resetStageTrail();
+  document.getElementById('result').style.display='none';
+  document.getElementById('recState').style.display='flex';
+  if (ws && ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify({action:'join',url}));
+  else { pendingUrl=url; ensureWS(); }
+}
+
+function leaveMeeting() {
+  if (ws && ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify({action:'leave'}));
+  stopTimer(); setRec(false); showIdle();
+}
+
+function showApp()  { document.getElementById('idle').classList.add('out'); document.getElementById('app').classList.add('in'); }
+function showIdle() { document.getElementById('idle').classList.remove('out'); document.getElementById('app').classList.remove('in'); document.getElementById('heroUrl').value=''; loadLibrary(); }
+
+function goHome() {
+  // Return to the home screen from any state. A recording in progress keeps
+  // running server-side and will appear in the library when it finishes.
+  document.getElementById('result').style.display='none';
+  document.getElementById('recState').style.display='flex';
+  showIdle();
+}
+
+function setStatus(txt, _kind) { document.getElementById('recStatus').textContent = txt.toLowerCase(); }
+function setHeadline(txt) { document.getElementById('recHeadline').textContent = txt; }
+function stripStage(text) { return String(text || '').replace(/^\[\d{2}s\]\s*/, ''); }
+function setOpsState(kind, text) {
+  const el = document.getElementById('opsState');
+  el.className = 'ops-state ' + kind;
+  el.textContent = text;
+  el.style.display = text ? 'block' : 'none';
+}
+function refreshOpsState() {
+  if (!appConfig.google_client_id) {
+    setOpsState('bad', 'Google user auth is not configured - set GOOGLE_CLIENT_ID before deployment');
+  } else if (!appConfig.auth_ready) {
+    setOpsState('warn', 'bot Google profile is not ready - open /admin and complete bot sign-in');
+  } else if (!appConfig.gmail_enabled) {
+    setOpsState('warn', 'Gmail delivery is not configured - recordings will still be saved in your library');
+  } else {
+    setOpsState('ready', 'ready: Google auth, bot join, recording, database, and Gmail delivery are configured');
+  }
+}
+
+function resetStageTrail() {
+  stageTrail = [];
+  document.getElementById('progressLog').innerHTML = '';
+  document.getElementById('progressLogWrap').style.display = 'none';
+}
+
+function pushStage(text) {
+  const raw = stripStage(text).trim();
+  if (!raw) return;
+  const ts = new Date();
+  const stamp = ts.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  stageTrail.unshift({ stamp, raw });
+  stageTrail = stageTrail.slice(0, 6);
+  document.getElementById('progressLogWrap').style.display = 'flex';
+  document.getElementById('progressLog').innerHTML = stageTrail.map(item => `
+    <div class="progress-item">
+      <div class="progress-time">${esc(item.stamp)}</div>
+      <div class="progress-msg">${esc(item.raw)}</div>
+    </div>`).join('');
+}
+
+function setRec(on) {
+  document.getElementById('recChip').className = 'rec-chip' + (on?' on':'');
+  document.getElementById('recLabel').textContent = on ? 'recording' : 'idle';
+  document.getElementById('recOrb').className = 'rec-orb' + (on?' live':'');
+  if (on) setHeadline('recording in progress');
+}
+function setPax(n) { document.getElementById('paxVal').textContent = n + (n===1?' person':' people'); }
+
+function startTimer() {
+  if (timerID) return;
+  timerStart = Date.now();
+  timerID = setInterval(()=>{
+    const s=Math.floor((Date.now()-timerStart)/1000);
+    document.getElementById('durVal').textContent = `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
+  },1000);
+}
+function stopTimer() { clearInterval(timerID); timerID=null; }
+
+function showResult(entry) {
+  setRec(false); stopTimer();
+  document.getElementById('recState').style.display='none';
+  const r=document.getElementById('result');
+  r.style.display='flex';
+  document.getElementById('resultVideo').src = mediaUrl(entry.url);
+  const dl=document.getElementById('dlBtn');
+  dl.href = mediaUrl(entry.url);
+  dl.setAttribute('download', entry.filename || 'atom-meeting');
+  dl.textContent = '↓ download ' + (entry.filename||'').split('.').pop();
+  const hint=document.querySelector('.result-hint');
+  const delivery = entry.email_delivery || {};
+  const deliveryEl = document.getElementById('deliveryState');
+  deliveryEl.className = 'delivery-state ' + (delivery.status || 'skipped');
+  if (delivery.status === 'sent') {
+    deliveryEl.textContent = delivery.attached ? 'sent to Gmail with the recording attached' : 'sent to Gmail with the recording link';
+  } else if (delivery.status === 'failed') {
+    deliveryEl.textContent = 'Gmail delivery failed - download is ready here';
+  } else {
+    deliveryEl.textContent = 'Gmail delivery not configured - download is ready here';
+  }
+  hint.innerHTML = 'full meeting recording · audio + video' +
+    (entry.s3_key ? ' · <span style="color:var(--green);font-weight:600">☁ saved to cloud</span>' : '');
+  setStatus('recording ready');
+}
+
+// ── LOGIN (Continue with Google) ──────────────────────────────
+function showLogin()  { document.getElementById('login').classList.remove('hide'); }
+function hideLogin()  { document.getElementById('login').classList.add('hide'); }
+
+function setProfile(username) {
+  document.getElementById('pcName').textContent = username;
+  document.getElementById('profileChip').style.display = 'flex';
+  loggedIn = true;
+}
+
+async function onGoogleCredential(resp) {
+  try {
+    const r = await apiFetch('/auth/google', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ credential: resp.credential }),
+    });
+    if (!r.ok) { document.getElementById('loginNote').textContent='sign-in failed — try again'; return; }
+    const d = await r.json();
+    setProfile(d.username);
+    hideLogin();
+    loadLibrary();
+    // Reconnect WS now that we have a session cookie (so the bot knows who we are)
+    if (ws) { try { ws.close(); } catch(e){} ws=null; }
+    ensureWS();
+  } catch(e) {
+    document.getElementById('loginNote').textContent='sign-in error — try again';
+  }
+}
+
+async function logout() {
+  loggedIn=false;
+  if (ws) { try { ws.close(); } catch(e){} ws=null; }
+  await apiFetch('/auth/logout',{method:'POST'});
+  location.reload();
+}
+
+async function initApp() {
+  // 1. Get Google client id
+  let cid = '';
+  try {
+    appConfig = await (await apiFetch('/config')).json();
+    cid = appConfig.google_client_id;
+    refreshOpsState();
+  } catch(e) {}
+
+  // 2. Already signed in?
+  try {
+    const me = await (await apiFetch('/auth/me')).json();
+    if (me.authenticated) { setProfile(me.username); hideLogin(); loadLibrary(); ensureWS(); return; }
+  } catch(e) {}
+
+  // 3. Show login with the Google button
+  if (!cid) {
+    document.getElementById('loginNote').textContent =
+      'login not configured — set GOOGLE_CLIENT_ID in .env';
+    return;
+  }
+  const tryRender = () => {
+    if (!(window.google && google.accounts && google.accounts.id)) { setTimeout(tryRender, 200); return; }
+    google.accounts.id.initialize({ client_id: cid, callback: onGoogleCredential });
+    const gtheme = document.documentElement.getAttribute('data-theme')==='light' ? 'outline' : 'filled_black';
+    google.accounts.id.renderButton(document.getElementById('gsi'),
+      { theme:gtheme, size:'large', text:'continue_with', shape:'pill', width:260 });
+  };
+  tryRender();
+}
+
+// LIBRARY (past recordings)
+function fmtDur(s) { s=s||0; return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`; }
+function fmtDate(ts) {
+  const d=new Date(ts*1000);
+  return d.toLocaleDateString(undefined,{month:'short',day:'numeric'}) + ' ' +
+         d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
+}
+async function loadLibrary() {
+  const wrap=document.getElementById('library'), list=document.getElementById('libList');
+  try {
+    const d = await (await apiFetch('/recordings')).json();
+    wrap.style.display='block';
+    if (!d.items || !d.items.length) {
+      list.innerHTML = `<div class="lib-empty">no recordings yet — paste a meet link above to start</div>`;
+      return;
+    }
+    list.innerHTML = d.items.map(e => `
+      <div class="lib-card" data-id="${e.id}">
+        <a class="lib-icon" href="${mediaUrl(e.url)}" target="_blank" title="play">▶</a>
+        <div class="lib-info">
+          <div class="lib-title">${esc(e.title)}</div>
+          <div class="lib-meta">${fmtDate(e.created_at)} · ${fmtDur(e.duration)}${e.s3_key?' · cloud':''}${e.email_delivery?.status==='sent'?' · gmail sent':''}</div>
+        </div>
+        <a class="lib-play" href="${mediaUrl(e.url)}" target="_blank">play</a>
+        <a class="lib-dl" href="${mediaUrl(e.url)}" download="${e.filename}">↓</a>
+        <button class="lib-del" onclick="deleteRec('${e.id}')" title="delete">✕</button>
+      </div>`).join('');
+  } catch(e) { console.error('loadLibrary', e); }
+}
+
+async function deleteRec(id) {
+  if (!confirm('Delete this recording? This cannot be undone.')) return;
+  const card=document.querySelector(`.lib-card[data-id="${id}"]`);
+  if (card) card.style.opacity='0.4';
+  try {
+    const r = await apiFetch('/recordings/'+id, { method:'DELETE' });
+    if ((await r.json()).ok) loadLibrary();
+    else if (card) card.style.opacity='1';
+  } catch(e) { if (card) card.style.opacity='1'; }
+}
+
+function esc(s) {
+  return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── PROFILE CARD ──────────────────────────────────────────────
+function fmtTotal(s) { s=s||0; const h=Math.floor(s/3600), m=Math.round((s%3600)/60); return h?`${h}h ${m}m`:`${m}m`; }
+function fmtSince(ts) { if(!ts) return '—'; return new Date(ts*1000).toLocaleDateString(undefined,{month:'short',year:'2-digit'}); }
+
+async function openCard() {
+  document.getElementById('pcardBackdrop').classList.add('open');
+  document.getElementById('pcard').classList.add('open');
+  await refreshCard();
+}
+function closeCard() {
+  document.getElementById('pcardBackdrop').classList.remove('open');
+  document.getElementById('pcard').classList.remove('open');
+}
+async function refreshCard() {
+  try {
+    const d = await (await apiFetch('/profile')).json();
+    if (!d.authenticated) return;
+    document.getElementById('cardAvatar').textContent = (d.username||'?')[0].toUpperCase();
+    document.getElementById('cardName').textContent = d.username;
+    document.getElementById('cardEmail').textContent = d.email;
+    document.getElementById('cardCount').textContent = d.count;
+    document.getElementById('cardTime').textContent = fmtTotal(d.total_duration);
+    document.getElementById('cardSince').textContent = fmtSince(d.created_at);
+
+    // active (recording now)
+    const aSec=document.getElementById('cardActiveSec'), aEl=document.getElementById('cardActive');
+    if (d.active && d.active.length) {
+      aSec.style.display='block';
+      aEl.innerHTML = d.active.map(a => `
+        <div class="sess">
+          <span class="sess-dot live"></span>
+          <div class="sess-info">
+            <div class="sess-title">${esc((a.meet_code||'meeting').replace(/-/g,' '))}</div>
+            <div class="sess-meta">recording · started ${fmtDate(a.started_at)}</div>
+          </div>
+        </div>`).join('');
+    } else { aSec.style.display='none'; }
+
+    // all sessions (recordings)
+    const sEl=document.getElementById('cardSessions');
+    if (!d.recordings || !d.recordings.length) {
+      sEl.innerHTML = `<div class="pcard-empty">no sessions yet</div>`;
+    } else {
+      sEl.innerHTML = d.recordings.map(e => `
+        <div class="sess" data-id="${e.id}">
+          <span class="sess-dot done"></span>
+          <div class="sess-info">
+            <div class="sess-title">${esc(e.title)}</div>
+            <div class="sess-meta">${fmtDate(e.created_at)} · ${fmtDur(e.duration)}${e.s3_key?' · cloud':''}${e.email_delivery?.status==='sent'?' · gmail sent':''}</div>
+          </div>
+          <div class="sess-act">
+            <a href="${mediaUrl(e.url)}" target="_blank">play</a>
+            <a href="${mediaUrl(e.url)}" download="${e.filename}">↓</a>
+            <button class="del" onclick="deleteRec('${e.id}'); setTimeout(refreshCard,400)">✕</button>
+          </div>
+        </div>`).join('');
+    }
+  } catch(e) { console.error('refreshCard', e); }
+}
+
+// THEME
+function applyTheme(t) {
+  document.documentElement.setAttribute('data-theme', t);
+  document.getElementById('themeToggle').textContent = t === 'light' ? '☀' : '☾';
+}
+function toggleTheme() {
+  const next = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+  localStorage.setItem('atom-theme', next);
+  applyTheme(next);
+}
+applyTheme(localStorage.getItem('atom-theme') || 'light');
+
+initApp();   // opens the WebSocket only after we know who the user is
+</script>
+</body>
+</html>
