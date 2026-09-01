@@ -7,7 +7,7 @@
 <style>
 :root { color-scheme:light; --bg:#F5F3EE; --panel:#fff; --line:#DED8CD; --ink:#151311; --muted:#726C61; --accent:#C77A18; --green:#2C8A5E; --red:#C94839; --m:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; --f:Inter,system-ui,sans-serif; }
 * { box-sizing:border-box; }
-body { margin:0; min-height:100vh; display:grid; place-items:center; background:var(--bg); color:var(--ink); font-family:var(--f); padding:24px; }
+body { margin:0; min-height:100vh; display:flex; align-items:flex-start; justify-content:center; background:var(--bg); color:var(--ink); font-family:var(--f); padding:24px; overflow-x:hidden; }
 main { width:min(760px,100%); background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:22px; box-shadow:0 18px 50px rgba(24,20,12,.08); }
 h1 { margin:0; font-size:26px; letter-spacing:-.03em; }
 p { color:var(--muted); line-height:1.6; margin:8px 0 18px; }
@@ -25,6 +25,8 @@ button:hover { border-color:var(--accent); }
 .bad { color:var(--red); }
 pre { overflow:auto; background:#151311; color:#F5F3EE; border-radius:8px; padding:14px; font:12px/1.55 var(--m); }
 .actions { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0 18px; }
+.help { border:1px solid var(--line); border-radius:8px; padding:12px; background:#F9F7F2; color:var(--muted); font:11px/1.7 var(--m); margin:14px 0; }
+.help code { color:var(--ink); }
 @media (max-width:640px) { .grid { grid-template-columns:1fr; } .token { flex-direction:column; } }
 </style>
 </head>
@@ -47,6 +49,11 @@ pre { overflow:auto; background:#151311; color:#F5F3EE; border-radius:8px; paddi
     <button onclick="clearAuth()">clear bot profile</button>
     <button onclick="refresh()">refresh</button>
   </div>
+  <div class="help">
+    Railway cannot show a visible Chrome sign-in window. If bot sign-in fails with an XServer/display error, create the bot profile locally with
+    <code>python -m meeting.meet.auth</code>, then upload <code>config/chrome_profile</code> into the Railway volume at
+    <code>/app/data/config/chrome_profile</code>.
+  </div>
 
   <pre id="out">loading...</pre>
 </main>
@@ -63,13 +70,19 @@ function headers() {
 }
 
 async function call(path, options={}) {
-  const res = await fetch(path, {...options, headers:{...headers(), ...(options.headers||{})}});
-  const text = await res.text();
-  let data;
-  try { data = text ? JSON.parse(text) : {}; }
-  catch(e) { data = {ok:false, message:text || String(e)}; }
-  out.textContent = JSON.stringify(data, null, 2);
-  return {res, data};
+  try {
+    const res = await fetch(path, {...options, headers:{...headers(), ...(options.headers||{})}});
+    const text = await res.text();
+    let data;
+    try { data = text ? JSON.parse(text) : {}; }
+    catch(e) { data = {ok:false, message:text || String(e)}; }
+    out.textContent = JSON.stringify(data, null, 2);
+    return {res, data};
+  } catch(e) {
+    const data = {ok:false, message:String(e)};
+    out.textContent = JSON.stringify(data, null, 2);
+    return {res:{status:0}, data};
+  }
 }
 
 function yn(label, value) {
@@ -91,7 +104,10 @@ async function refresh() {
   } else if (status.data.running) {
     notice.textContent = 'Bot Google sign-in is running. Wait for it to finish, then refresh.';
   } else if (status.data.error) {
-    notice.textContent = 'Bot sign-in failed: ' + status.data.error;
+    const displayError = /xserver|display|headed browser/i.test(status.data.error)
+      ? 'Railway cannot open the Google sign-in browser. Use the local profile upload method below.'
+      : status.data.error;
+    notice.textContent = 'Bot sign-in failed: ' + displayError;
   } else if (status.data.has_auth) {
     notice.textContent = 'Bot Google profile is ready.';
   } else {
