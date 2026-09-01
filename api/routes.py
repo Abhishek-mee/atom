@@ -109,7 +109,7 @@ def _snapshot_readiness() -> dict:
         "bot_google_profile": has_auth(),
     }
     return {
-        "ok": checks["database"] and checks["recordings_dir"] and checks["google_client_id"],
+        "ok": all(checks.values()),
         "checks": checks,
         "health": _snapshot_health(),
     }
