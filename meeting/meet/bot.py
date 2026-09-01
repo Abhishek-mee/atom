@@ -29,7 +29,13 @@ try:
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
 
-from meeting.meet.auth import profile_dir, list_profile_slots, CHROME_ARGS, browser_channel
+from meeting.meet.auth import (
+    profile_dir,
+    storage_state_path,
+    list_profile_slots,
+    CHROME_ARGS,
+    browser_channel,
+)
 
 # ── Config ──────────────────────────────────────────────────────────────────
 ALONE_TIMEOUT  = 30          # seconds alone before leaving
@@ -51,14 +57,14 @@ def audio_file_for(session_id: str) -> Path:
 import itertools as _itertools
 _slot_cycle = None
 
-def _pick_profile_dir() -> Path | None:
-    """Pick next available signed-in Chrome profile, round-robin. None if none."""
+def _pick_auth_slot() -> int | None:
+    """Pick next available signed-in Google auth slot, round-robin. None if none."""
     global _slot_cycle
     slots = list_profile_slots()
     if not slots:
         return None
     _slot_cycle = _itertools.cycle(slots)
-    return profile_dir(next(_slot_cycle))
+    return next(_slot_cycle)
 
 
 # ── Callbacks ───────────────────────────────────────────────────────────────
@@ -185,10 +191,13 @@ class MeetBot:
             raise RuntimeError("Run: pip install playwright && playwright install chromium")
 
         self._started_at = time.time()
-        pdir = _pick_profile_dir()
-        if pdir is None:
+        slot = _pick_auth_slot()
+        if slot is None:
             await self._status("⚠️ No Google session — click 'sign in as atom' first")
             raise RuntimeError("No signed-in Chrome profile. Run sign-in first.")
+        pdir = profile_dir(slot)
+        state_path = storage_state_path(slot)
+        use_storage_state = state_path.exists()
 
         recording = record_enabled()
 
@@ -200,8 +209,7 @@ class MeetBot:
             rw = int(os.getenv("REC_WIDTH", "1280"))
             rh = int(os.getenv("REC_HEIGHT", "720"))
 
-            ctx_kwargs = dict(
-                user_data_dir=str(pdir),
+            shared_ctx_kwargs = dict(
                 headless=True,
                 args=CHROME_ARGS + [
                     # Auto-grant the permission prompt, but DON'T supply a fake
@@ -225,15 +233,31 @@ class MeetBot:
             )
             _ch = browser_channel()
             if _ch:
-                ctx_kwargs["channel"] = _ch   # real Chrome (macOS/x86); else bundled Chromium
+                shared_ctx_kwargs["channel"] = _ch   # real Chrome (macOS/x86); else bundled Chromium
             if recording:
                 RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
-                ctx_kwargs["record_video_dir"]  = str(RECORDINGS_DIR)
-                ctx_kwargs["record_video_size"] = {"width": rw, "height": rh}
+                shared_ctx_kwargs["record_video_dir"]  = str(RECORDINGS_DIR)
+                shared_ctx_kwargs["record_video_size"] = {"width": rw, "height": rh}
                 logger.info("Video recording enabled → %s (%dx%d)", RECORDINGS_DIR, rw, rh)
 
-            ctx = await pw.chromium.launch_persistent_context(**ctx_kwargs)
-            logger.info("Launched Chrome with profile %s", pdir)
+            browser = None
+            if use_storage_state:
+                browser = await pw.chromium.launch(
+                    headless=True,
+                    args=shared_ctx_kwargs.pop("args"),
+                    **({"channel": shared_ctx_kwargs.pop("channel")} if "channel" in shared_ctx_kwargs else {}),
+                )
+                ctx = await browser.new_context(
+                    storage_state=str(state_path),
+                    **shared_ctx_kwargs,
+                )
+                logger.info("Launched Chrome with storage state %s", state_path)
+            else:
+                ctx = await pw.chromium.launch_persistent_context(
+                    user_data_dir=str(pdir),
+                    **shared_ctx_kwargs,
+                )
+                logger.info("Launched Chrome with profile %s", pdir)
 
             await ctx.add_init_script(
                 "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
@@ -325,7 +349,9 @@ class MeetBot:
                 await asyncio.sleep(2)   # let MediaRecorder flush final chunk
                 logger.info("Audio chunks received: %d", self._audio_chunks)
 
-            await ctx.close()        # finalizes the webm video file (persistent context)
+            await ctx.close()        # finalizes the webm video file
+            if browser is not None:
+                await browser.close()
 
             if video_obj is not None:
                 try:

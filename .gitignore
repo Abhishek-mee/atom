@@ -2,6 +2,7 @@
 .railway-admin-token.txt
 config/google_credentials.json
 config/google_token.json
+config/google_state_*.json
 __pycache__/
 *.py[cod]
 .venv/

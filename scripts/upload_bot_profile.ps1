@@ -1,13 +1,13 @@
 param(
-  [string]$ProfilePath = "config\chrome_profile"
+  [string]$StatePath = "config\google_state_0.json"
 )
 
 $ErrorActionPreference = "Stop"
 
-if (!(Test-Path -LiteralPath $ProfilePath)) {
-  throw "Profile path not found: $ProfilePath. Run `python -m meeting.meet.auth` first."
+if (!(Test-Path -LiteralPath $StatePath)) {
+  throw "Google state file not found: $StatePath. Run `$env:BROWSER_CHANNEL='chrome'; .\.venv\Scripts\python.exe -m meeting.meet.auth first."
 }
 
-railway volume files upload $ProfilePath /app/data/config/chrome_profile --overwrite --json
+railway volume files upload $StatePath /app/data/config/google_state_0.json --overwrite --json
 
-Write-Host "Uploaded $ProfilePath to /app/data/config/chrome_profile"
+Write-Host "Uploaded $StatePath to /app/data/config/google_state_0.json"

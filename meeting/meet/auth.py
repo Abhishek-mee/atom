@@ -53,15 +53,25 @@ def profile_dir(slot: int = 0) -> Path:
     return CONFIG_DIR / ("chrome_profile" if slot == 0 else f"chrome_profile_{slot}")
 
 
+def storage_state_path(slot: int = 0) -> Path:
+    return CONFIG_DIR / f"google_state_{slot}.json"
+
+
 def clear_profile(slot: int = 0) -> bool:
     """Delete a profile's stored login so a different account can sign in."""
     import shutil
     p = profile_dir(slot)
+    state = storage_state_path(slot)
+    cleared = False
     if p.exists():
         shutil.rmtree(p, ignore_errors=True)
         logger.info("Cleared profile %s", p)
-        return True
-    return False
+        cleared = True
+    if state.exists():
+        state.unlink(missing_ok=True)
+        logger.info("Cleared storage state %s", state)
+        cleared = True
+    return cleared
 
 
 def clear_profile_locks(slot: int = 0) -> list[str]:
@@ -97,14 +107,21 @@ def _profile_has_login(p: Path) -> bool:
 
 def list_profile_slots() -> list[int]:
     """Return slot numbers that have a logged-in profile."""
-    slots = []
+    slots: set[int] = set()
+    for state in CONFIG_DIR.glob("google_state_*.json"):
+        try:
+            slot = int(state.stem.rsplit("_", 1)[-1])
+        except ValueError:
+            continue
+        if state.exists() and state.stat().st_size > 100:
+            slots.add(slot)
     for d in CONFIG_DIR.glob("chrome_profile*"):
         if not d.is_dir():
             continue
         name = d.name
         slot = 0 if name == "chrome_profile" else int(name.rsplit("_", 1)[-1])
         if _profile_has_login(d):
-            slots.append(slot)
+            slots.add(slot)
     return sorted(slots)
 
 
@@ -163,7 +180,7 @@ async def save_auth(slot: int = 0, timeout_s: int = 300) -> None:
         except Exception:
             pass
 
-        print("  Waiting for sign-in…")
+        print("  Waiting for sign-in...")
         deadline = asyncio.get_event_loop().time() + timeout_s
         signed = False
         while asyncio.get_event_loop().time() < deadline:
@@ -172,10 +189,17 @@ async def save_auth(slot: int = 0, timeout_s: int = 300) -> None:
                 print("  Window closed by user.")
                 break
             if await _is_signed_in(ctx):
-                print("  ✓ Signed in — auth cookie detected.")
+                print("  Signed in - auth cookie detected.")
                 await asyncio.sleep(2)   # let cookies flush to disk
                 signed = True
                 break
+
+        if signed or _profile_has_login(pdir):
+            state_path = storage_state_path(slot)
+            try:
+                await ctx.storage_state(path=str(state_path))
+            except Exception as exc:
+                logger.warning("Could not save portable Google storage state: %s", exc)
 
         if not closed["v"]:
             try:
@@ -185,7 +209,8 @@ async def save_auth(slot: int = 0, timeout_s: int = 300) -> None:
 
         # Final truth: did the profile actually capture a login?
         if signed or _profile_has_login(pdir):
-            print(f"\n✓ Profile saved → {pdir}")
+            print(f"\nProfile saved -> {pdir}")
+            print(f"Portable state saved -> {storage_state_path(slot)}")
         else:
             raise RuntimeError("Sign-in not completed (no auth cookie captured)")
 
