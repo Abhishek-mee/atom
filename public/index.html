@@ -681,14 +681,18 @@ async function joinMeeting() {
     setLoginState('bad', 'sign in with Google first', 'Continue with Google to use Atom.');
     return;
   }
-  const url=(document.getElementById('heroUrl').value||'').trim();
+  const rawUrl=(document.getElementById('heroUrl').value||'').trim();
+  const url=normalizeMeetUrl(rawUrl);
   if (!appConfig.auth_ready) {
     setOpsState('warn', 'bot Google profile is not ready - open /admin after deployment and complete bot sign-in');
     return;
   }
-  if (!url || !url.includes('meet.google.com')) {
+  if (!url) {
     const inp=document.getElementById('heroUrl');
-    inp.style.outline='2px solid var(--red)'; setTimeout(()=>inp.style.outline='',1500); return;
+    inp.style.outline='2px solid var(--red)';
+    setOpsState('warn', 'Paste a full Google Meet link like https://meet.google.com/abc-defg-hij');
+    setTimeout(()=>inp.style.outline='',1500);
+    return;
   }
   joining=true;
   const btn=document.getElementById('heroBtn');
@@ -713,6 +717,22 @@ async function joinMeeting() {
   const payload = {action:'join', url, drive_token:driveToken};
   if (ws && ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify(payload));
   else { pendingJoin=payload; ensureWS(); }
+}
+
+function normalizeMeetUrl(raw) {
+  let value = String(raw || '').trim();
+  if (!value) return '';
+  if (value.startsWith('http://')) value = 'https://' + value.slice(7);
+  else if (!value.startsWith('https://')) value = 'https://' + value.replace(/^\/+/, '');
+  try {
+    const u = new URL(value);
+    if (u.hostname.toLowerCase() !== 'meet.google.com') return '';
+    const code = u.pathname.replace(/^\/+/, '').split('/')[0].toLowerCase();
+    if (!/^[a-z]{3}-[a-z]{4}-[a-z]{3}$/.test(code)) return '';
+    return `https://meet.google.com/${code}`;
+  } catch(e) {
+    return '';
+  }
 }
 
 function failJoin(message, code) {

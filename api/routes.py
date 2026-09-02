@@ -8,8 +8,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -72,6 +74,26 @@ app.mount("/recordings", StaticFiles(directory=str(RECORDINGS_DIR)), name="recor
 
 # Auth flow state
 _auth_state: dict = {"running": False, "done": False, "error": None}
+
+
+def normalize_meet_url(raw: str) -> tuple[str, str]:
+    """Return a safe Google Meet URL and meet code, or raise ValueError."""
+    value = (raw or "").strip()
+    if not value:
+        raise ValueError("No meeting URL provided.")
+    if value.startswith("http://"):
+        value = "https://" + value.removeprefix("http://")
+    elif not value.startswith("https://"):
+        value = "https://" + value.lstrip("/")
+
+    parsed = urlparse(value)
+    if parsed.netloc.lower() != "meet.google.com":
+        raise ValueError("Paste a valid Google Meet link.")
+
+    code = parsed.path.strip("/").split("/")[0].lower()
+    if not re.fullmatch(r"[a-z]{3}-[a-z]{4}-[a-z]{3}", code):
+        raise ValueError("Paste a full Google Meet link like https://meet.google.com/abc-defg-hij.")
+    return f"https://meet.google.com/{code}", code
 
 
 @app.on_event("startup")
@@ -378,10 +400,12 @@ async def meeting_ws(ws: WebSocket) -> None:
                 if not user:
                     await send({"type": "error", "message": "Please sign in first."})
                     continue
-                url = msg.get("url", "").strip()
+                raw_url = msg.get("url", "").strip()
                 drive_token = msg.get("drive_token", "").strip()
-                if not url:
-                    await send({"type": "error", "code": "missing_meet_url", "message": "No meeting URL provided."})
+                try:
+                    url, meet_code = normalize_meet_url(raw_url)
+                except ValueError as exc:
+                    await send({"type": "error", "code": "invalid_meet_url", "message": str(exc)})
                     continue
                 if not drive_token:
                     await send({
@@ -406,9 +430,6 @@ async def meeting_ws(ws: WebSocket) -> None:
                     on_status=on_status,
                     on_count=on_count,
                 )
-
-                # Derive a friendly title from the meet code (…/abc-defg-hij)
-                meet_code = url.rstrip("/").split("/")[-1].split("?")[0]
 
                 # Register as a live session for the profile card
                 _active[bot.session_id] = {
