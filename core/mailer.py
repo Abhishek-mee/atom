@@ -30,11 +30,11 @@ def _from_email() -> str:
 
 
 def _attach_limit_bytes() -> int:
-    raw = os.getenv("EMAIL_ATTACH_LIMIT_MB", "20").strip()
+    raw = os.getenv("EMAIL_ATTACH_LIMIT_MB", "0").strip()
     try:
-        return max(1, int(raw)) * 1024 * 1024
+        return max(0, int(raw)) * 1024 * 1024
     except ValueError:
-        return 20 * 1024 * 1024
+        return 0
 
 
 def _absolute_url(url: str | None) -> str | None:
@@ -80,19 +80,25 @@ def _send_sync(entry: dict, recipient: str, local_path: Path | None) -> dict:
         "",
         f"Meeting: {title}",
     ]
+    if entry.get("summary"):
+        body += ["", "Summary:", entry["summary"]]
     if playback_url:
         body += ["", f"Recording link: {playback_url}"]
     if drive_url:
         body += ["", f"Google Drive: {drive_url}"]
 
     should_attach = bool(
-        local_path and local_path.exists() and local_path.stat().st_size <= _attach_limit_bytes()
+        local_path and local_path.exists() and _attach_limit_bytes() > 0
+        and local_path.stat().st_size <= _attach_limit_bytes()
     )
     if should_attach:
         body += ["", "The recording is attached to this email."]
     elif local_path and local_path.exists():
         limit_mb = _attach_limit_bytes() // (1024 * 1024)
-        body += ["", f"The file is larger than {limit_mb} MB, so use the Google Drive link above."]
+        if limit_mb:
+            body += ["", f"The file is larger than {limit_mb} MB, so use the Google Drive link above."]
+        else:
+            body += ["", "Use the Google Drive link above to open the recording."]
     elif not playback_url and not drive_url:
         body += ["", "Atom could not create a recording link. Please try again."]
 

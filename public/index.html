@@ -220,6 +220,12 @@ html[data-theme="dark"] .dash-nav, html[data-theme="dark"] .topbar { background:
 .pcard-avatar { width:52px; height:52px; border-radius:8px; background:var(--bg); border:1px solid var(--line); display:flex; align-items:center; justify-content:center; font-size:22px; font-weight:700; color:var(--accent); flex-shrink:0; }
 .pcard-uname { font-size:18px; font-weight:700; letter-spacing:-.5px; }
 .pcard-email { font-family:var(--m); font-size:11px; color:var(--muted); margin-top:2px; }
+.profile-edit { display:flex; gap:8px; margin-top:16px; }
+.profile-edit input { min-width:0; flex:1; border:1px solid var(--line); border-radius:6px; background:var(--panel2); color:var(--ink); padding:9px 10px; font:600 12px var(--m); outline:none; }
+.profile-edit input:focus { border-color:var(--accent); }
+.profile-edit button { border:1px solid var(--line); border-radius:6px; background:var(--panel); color:var(--ink2); padding:9px 12px; font:700 11px var(--m); cursor:pointer; }
+.profile-edit button:hover { border-color:var(--accent); color:var(--accent); }
+.profile-edit-note { margin-top:7px; min-height:14px; font:500 10px var(--m); color:var(--muted); }
 .pcard-stats { display:flex; gap:1px; margin-top:20px; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
 .pcard-stat { flex:1; padding:12px; background:var(--panel2); text-align:center; }
 .pcard-stat .v { font-family:var(--m); font-size:18px; font-weight:700; color:var(--ink); }
@@ -236,6 +242,7 @@ html[data-theme="dark"] .dash-nav, html[data-theme="dark"] .topbar { background:
 .sess-info { flex:1; min-width:0; }
 .sess-title { font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .sess-meta { font-family:var(--m); font-size:9.5px; color:var(--muted); margin-top:1px; }
+.sess-summary { margin-top:5px; font-size:11px; line-height:1.5; color:var(--ink2); }
 .sess-act { display:flex; gap:4px; }
 .sess-act a, .sess-act button { font-family:var(--m); font-size:10px; text-decoration:none; color:var(--ink2); background:transparent; border:1px solid var(--line); border-radius:3px; padding:4px 8px; cursor:pointer; transition:all .15s; }
 .sess-act a:hover { border-color:var(--accent); color:var(--accent); }
@@ -364,6 +371,11 @@ html[data-theme="dark"] .dash-nav, html[data-theme="dark"] .topbar { background:
         <div class="pcard-email" id="cardEmail">—</div>
       </div>
     </div>
+    <div class="profile-edit">
+      <input id="profileNameInput" maxlength="32" placeholder="custom profile name" onkeydown="if(event.key==='Enter') saveProfileName()"/>
+      <button onclick="saveProfileName()">save</button>
+    </div>
+    <div class="profile-edit-note" id="profileEditNote"></div>
     <div class="pcard-stats">
       <div class="pcard-stat"><div class="v" id="cardCount">0</div><div class="l">recordings</div></div>
       <div class="pcard-stat"><div class="v" id="cardTime">0m</div><div class="l">total time</div></div>
@@ -451,7 +463,7 @@ html[data-theme="dark"] .dash-nav, html[data-theme="dark"] .topbar { background:
           </ul>
         </div>
       </div>
-      <div class="pricing-foot">The first demo proves the core ability chain before adding transcript, summary, calendar, or paid-plan surfaces.</div>
+      <div class="pricing-foot">The first demo proves the core ability chain with private-screen guards, delivery history, and a meeting summary.</div>
     </section>
   </div>
 </div>
@@ -790,7 +802,7 @@ function showResult(entry) {
   } else {
     deliveryEl.textContent = 'delivery needs attention - the server copy was removed';
   }
-  hint.textContent = 'Atom keeps only delivery history after the recording is sent.';
+  hint.textContent = entry.summary || 'Atom keeps only delivery history after the recording is sent.';
   setStatus(mailOk && driveOk ? 'recording delivered' : 'delivery needs attention');
 }
 
@@ -817,12 +829,36 @@ function setProfile(username) {
 
 function setDashboardProfile(data) {
   if (!data || !data.authenticated) return;
-  setProfile(data.username);
+  setProfile(data.display_name || data.username);
   document.getElementById('navEmail').textContent = data.email || 'signed in';
   document.getElementById('summaryEmail').textContent = data.email || 'signed in';
   document.getElementById('summaryCount').textContent = data.count ?? 0;
   document.getElementById('summaryTime').textContent = fmtTotal(data.total_duration || 0);
   document.getElementById('summarySince').textContent = fmtSince(data.created_at);
+}
+
+async function saveProfileName() {
+  const input = document.getElementById('profileNameInput');
+  const note = document.getElementById('profileEditNote');
+  const username = (input.value || '').trim();
+  note.textContent = 'saving...';
+  try {
+    const r = await apiFetch('/profile', {
+      method:'PATCH',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({username}),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.ok) {
+      note.textContent = d.message || 'could not save profile name';
+      return;
+    }
+    note.textContent = 'saved';
+    await refreshDashboardProfile();
+    await refreshCard();
+  } catch(e) {
+    note.textContent = 'could not save profile name';
+  }
 }
 
 function initDriveTokenClient(cid) {
@@ -1016,8 +1052,9 @@ async function refreshCard() {
     if (!d.authenticated) return;
     setDashboardProfile(d);
     document.getElementById('cardAvatar').textContent = (d.username||'?')[0].toUpperCase();
-    document.getElementById('cardName').textContent = d.username;
+    document.getElementById('cardName').textContent = d.display_name || d.username;
     document.getElementById('cardEmail').textContent = d.email;
+    document.getElementById('profileNameInput').value = d.display_name || d.username;
     document.getElementById('cardCount').textContent = d.count;
     document.getElementById('cardTime').textContent = fmtTotal(d.total_duration);
     document.getElementById('cardSince').textContent = fmtSince(d.created_at);
@@ -1047,6 +1084,7 @@ async function refreshCard() {
           <div class="sess-info">
             <div class="sess-title">${esc(e.title)}</div>
             <div class="sess-meta">${fmtDate(e.created_at)} · ${fmtDur(e.duration)}${deliveryMeta(e)}</div>
+            ${e.summary ? `<div class="sess-summary">${esc(e.summary)}</div>` : ''}
           </div>
           <div class="sess-act">
             ${e.drive_delivery?.url ? `<a href="${e.drive_delivery.url}" target="_blank">drive</a>` : ''}

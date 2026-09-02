@@ -29,6 +29,7 @@ def init_db() -> None:
                 sub TEXT PRIMARY KEY,
                 email TEXT NOT NULL,
                 username TEXT NOT NULL UNIQUE,
+                display_name TEXT,
                 created_at INTEGER NOT NULL
             );
 
@@ -58,6 +59,7 @@ def init_db() -> None:
                 drive_file_id TEXT,
                 drive_url TEXT,
                 drive_delivery_updated_at INTEGER,
+                summary TEXT,
                 FOREIGN KEY (user_sub) REFERENCES users(sub) ON DELETE CASCADE
             );
 
@@ -72,6 +74,10 @@ def init_db() -> None:
             "drive_file_id": "TEXT",
             "drive_url": "TEXT",
             "drive_delivery_updated_at": "INTEGER",
+            "summary": "TEXT",
+        })
+        _ensure_columns(conn, "users", {
+            "display_name": "TEXT",
         })
 
 

@@ -87,15 +87,16 @@ async def add_recording(local_path: Path, meet_code: str = "", user_sub: str = "
         "size": size,
         "filename": local_path.name,
         "s3_key": None,
+        "summary": build_meeting_summary(meet_code=meet_code, duration=duration),
     }
 
     with connect() as conn:
         conn.execute(
             """
             INSERT INTO recordings (
-                id, user_sub, title, meet_code, created_at, duration, size, filename, s3_key
+                id, user_sub, title, meet_code, created_at, duration, size, filename, s3_key, summary
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 entry["id"],
@@ -107,20 +108,44 @@ async def add_recording(local_path: Path, meet_code: str = "", user_sub: str = "
                 entry["size"],
                 entry["filename"],
                 entry["s3_key"],
+                entry["summary"],
             ),
         )
     return _decorate(entry)
 
 
+def build_meeting_summary(*, meet_code: str, duration: int) -> str:
+    minutes = max(1, round((duration or 0) / 60))
+    title = (meet_code or "meeting").replace("-", " ").strip() or "meeting"
+    return (
+        f"Atom recorded the Google Meet session '{title}' for about {minutes} minute"
+        f"{'' if minutes == 1 else 's'}. The recording was prepared for delivery to the user's Gmail and Google Drive. "
+        "Content-level summaries require transcript capture and are not generated from private account screens."
+    )
+
+
 def _decorate(e: dict) -> dict:
-    """Add a resolved playback URL (presigned S3, else local static)."""
-    url = None
-    if e.get("s3_key"):
-        url = _presign(e["s3_key"])
-    if not url:
-        local = RECORDINGS_DIR / e["filename"]
-        url = f"/recordings/{e['filename']}" if local.exists() else None
+    """Add the user-owned Drive URL when available."""
+    drive = e.get("drive_delivery") or {}
+    url = drive.get("url")
     return {**e, "url": url}
+
+
+def purge_local_recording_files() -> int:
+    """Delete leftover local media files so Atom is not a recording host."""
+    count = 0
+    RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+    for path in RECORDINGS_DIR.glob("*"):
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in {".mp4", ".webm", ".mkv", ".mov"}:
+            continue
+        try:
+            path.unlink(missing_ok=True)
+            count += 1
+        except Exception as exc:
+            logger.warning("Could not purge local recording file %s: %s", path, exc)
+    return count
 
 
 def list_recordings(user_sub: str = "") -> list[dict]:
@@ -242,6 +267,7 @@ def _row_to_entry(row) -> dict:
         "size": row["size"],
         "filename": row["filename"],
         "s3_key": row["s3_key"],
+        "summary": row["summary"] if "summary" in row.keys() else "",
     }
     if row["email_delivery_status"]:
         entry["email_delivery"] = {

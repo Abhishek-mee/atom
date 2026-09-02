@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import random
+import re
 import secrets
 import time
 
@@ -72,6 +73,26 @@ def get_or_create_user(sub: str, email: str) -> dict:
         return user
 
 
+def update_username(sub: str, username: str) -> tuple[bool, str, dict | None]:
+    username = re.sub(r"\s+", "-", username.strip().lower())
+    username = re.sub(r"[^a-z0-9_-]", "", username)
+    username = username.strip("-_")
+    if len(username) < 3:
+        return False, "Username must be at least 3 letters or numbers.", None
+    if len(username) > 32:
+        return False, "Username must be 32 characters or less.", None
+    with connect() as conn:
+        existing = conn.execute(
+            "SELECT sub FROM users WHERE username = ? AND sub != ?",
+            (username, sub),
+        ).fetchone()
+        if existing:
+            return False, "That username is already taken.", None
+        conn.execute("UPDATE users SET username = ?, display_name = ? WHERE sub = ?", (username, username, sub))
+        row = conn.execute("SELECT * FROM users WHERE sub = ?", (sub,)).fetchone()
+        return True, "Updated", _user_dict(row)
+
+
 # ── sessions ──────────────────────────────────────────────────────────────────
 def create_session(sub: str) -> str:
     token = secrets.token_urlsafe(32)
@@ -107,10 +128,13 @@ def destroy_session(token: str | None) -> None:
 
 
 def _user_dict(row) -> dict:
+    has_display_name = "display_name" in row.keys()
+    display_name = row["display_name"] if has_display_name and row["display_name"] else row["username"]
     return {
         "sub": row["sub"],
         "email": row["email"],
         "username": row["username"],
+        "display_name": display_name,
         "created_at": row["created_at"],
     }
 

@@ -43,6 +43,7 @@ MAX_DURATION   = 7200        # 2 hour hard cap
 JOIN_WAIT      = 60          # seconds to wait for admission
 RECORDINGS_DIR = Path(os.getenv("RECORDINGS_DIR", "api/static/recordings"))
 DEBUG_DIR      = Path(os.getenv("DEBUG_DIR", "api/static/debug"))
+DEBUG_SCREENSHOTS = os.getenv("DEBUG_SCREENSHOTS", "false").lower() in ("1", "true", "yes")
 
 
 def record_enabled() -> bool:
@@ -178,6 +179,9 @@ class MeetBot:
         self._audio_path: Path | None = None
         self._audio_chunks: int = 0
         self._started_at: float | None = None
+        self._context_opened_at: float | None = None
+        self._meeting_started_at: float | None = None
+        self._admitted: bool = False
 
     async def _status(self, message: str) -> None:
         if self._started_at is None:
@@ -203,6 +207,7 @@ class MeetBot:
 
         async with async_playwright() as pw:
             await self._status("Launching Chrome…")
+            self._context_opened_at = time.time()
 
             # Resolution is configurable — lower it (e.g. 854x480) to run on a
             # cheap 1GB host. Default 1280x720.
@@ -293,6 +298,10 @@ class MeetBot:
             await self._page.goto(self.url, wait_until="domcontentloaded", timeout=30_000)
             await asyncio.sleep(2.5)
             await self._screenshot("01_loaded")
+            if await self._is_private_google_screen():
+                raise RuntimeError(
+                    "Bot Google profile is signed out. Reconnect Atom's bot profile in /admin before recording."
+                )
 
             await self._dismiss_popups()
             await self._set_name()
@@ -305,6 +314,8 @@ class MeetBot:
 
             await self._status("Waiting to be admitted…")
             await self._wait_for_admission()
+            self._admitted = True
+            self._meeting_started_at = time.time()
             await asyncio.sleep(1.5)
             await self._screenshot("03_in_meeting")
 
@@ -381,6 +392,10 @@ class MeetBot:
         # Guard: if the video is basically empty, the bot never really recorded
         # (e.g. never admitted to the meeting). Don't save a broken file.
         vdur_check = self._ffprobe_dur(video_webm)
+        if not self._admitted or not self._meeting_started_at:
+            logger.warning("Bot was not admitted to the meeting — discarding video")
+            video_webm.unlink(missing_ok=True)
+            return None
         if video_webm.stat().st_size < 50_000 or vdur_check < 2.0:
             logger.warning("Empty recording (%.1fs, %d bytes) — discarding",
                            vdur_check, video_webm.stat().st_size)
@@ -401,12 +416,12 @@ class MeetBot:
                     video_webm.stat().st_size,
                     f"{audio_webm.stat().st_size} bytes" if has_audio else "none")
 
-        # Sync: video starts at browser launch, audio at admission (later). Both
-        # end together → trim the video head by the duration difference.
-        head_trim = 0.0
+        # Privacy guard: Playwright video starts when the browser context opens,
+        # so trim every pre-admission frame before muxing the deliverable.
+        head_trim = max(0.0, (self._meeting_started_at or 0) - (self._context_opened_at or 0))
         if has_audio:
             vdur, adur = self._ffprobe_dur(video_webm), self._ffprobe_dur(audio_webm)
-            head_trim = max(0.0, vdur - adur)
+            head_trim = max(head_trim, max(0.0, vdur - adur))
             logger.info("Sync: video=%.1fs audio=%.1fs → trim head %.1fs", vdur, adur, head_trim)
 
         cmd = ["ffmpeg", "-y"]
@@ -527,8 +542,28 @@ class MeetBot:
                         return
             except Exception:
                 pass
+            if await self._is_private_google_screen():
+                raise RuntimeError(
+                    "Bot Google profile is signed out. Reconnect Atom's bot profile in /admin before recording."
+                )
             await asyncio.sleep(1.5)
-        await self._status("Still waiting to be admitted…")
+        raise RuntimeError("Atom was not admitted to the meeting, so no recording was saved.")
+
+    async def _is_private_google_screen(self) -> bool:
+        try:
+            url = self._page.url.lower()
+            if "accounts.google." in url or "/signin/" in url:
+                return True
+            text = (await self._page.locator("body").inner_text(timeout=1_000)).lower()
+            private_markers = [
+                "choose an account",
+                "use another account",
+                "remove an account",
+                "signed out",
+            ]
+            return any(marker in text for marker in private_markers)
+        except Exception:
+            return False
 
     async def _change_display_name(self) -> None:
         try:
@@ -582,6 +617,8 @@ class MeetBot:
                 continue
 
     async def _screenshot(self, name: str) -> None:
+        if not DEBUG_SCREENSHOTS:
+            return
         try:
             DEBUG_DIR.mkdir(parents=True, exist_ok=True)
             await self._page.screenshot(path=str(DEBUG_DIR / f"{name}.png"), full_page=False)

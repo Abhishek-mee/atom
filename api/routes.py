@@ -25,6 +25,7 @@ from core.storage import (
     cleanup_recording_files,
     delete_recording,
     list_recordings,
+    purge_local_recording_files,
     s3_enabled,
     update_recording_delivery,
     update_recording_drive_delivery,
@@ -32,6 +33,7 @@ from core.storage import (
 from core.users import (
     google_client_id, verify_google_credential, get_or_create_user,
     create_session, user_for_session, destroy_session, user_count, session_count,
+    update_username,
 )
 from meeting.meet.auth import (
     CONFIG_DIR,
@@ -58,7 +60,7 @@ if _cors_origins:
         CORSMiddleware,
         allow_origins=_cors_origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["*"],
     )
 
@@ -78,6 +80,14 @@ async def startup() -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
     (STATIC_DIR / "debug").mkdir(parents=True, exist_ok=True)
+    removed = purge_local_recording_files()
+    if removed:
+        logger.info("Purged %d leftover local recording files", removed)
+    for debug_file in (STATIC_DIR / "debug").glob("*.png"):
+        try:
+            debug_file.unlink(missing_ok=True)
+        except Exception as exc:
+            logger.warning("Could not remove debug screenshot %s: %s", debug_file, exc)
 
 
 def _admin_allowed(request: Request) -> bool:
@@ -281,6 +291,7 @@ async def profile(request: Request) -> JSONResponse:
     return JSONResponse({
         "authenticated": True,
         "username": user["username"],
+        "display_name": user.get("display_name") or user["username"],
         "email": user["email"],
         "created_at": user.get("created_at", 0),
         "count": len(recs),
@@ -288,6 +299,19 @@ async def profile(request: Request) -> JSONResponse:
         "active": active,
         "recordings": recs,
     })
+
+
+@app.patch("/profile")
+async def update_profile(request: Request) -> JSONResponse:
+    user = user_for_session(request.cookies.get(SESSION_COOKIE))
+    if not user:
+        return JSONResponse({"ok": False, "message": "Not signed in"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "message": "Invalid JSON"}, status_code=400)
+    ok, message, updated = update_username(user["sub"], str(body.get("username", "")))
+    return JSONResponse({"ok": ok, "message": message, "user": updated}, status_code=200 if ok else 400)
 
 
 @app.delete("/recordings/{rec_id}")
@@ -429,6 +453,6 @@ async def meeting_ws(ws: WebSocket) -> None:
 
     except WebSocketDisconnect:
         # Do NOT cancel the recording. The socket may drop or reconnect, but the
-        # bot keeps recording and finalizes server-side — the finished MP4 still
-        # is delivered server-side. (Explicit "leave" is the only stop.)
+        # bot keeps recording and finalizes delivery. Completed media is uploaded
+        # to the user's Google Drive and the local server copy is removed.
         logger.info("WebSocket disconnected; recording continues in background")
