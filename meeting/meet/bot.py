@@ -50,6 +50,10 @@ def record_enabled() -> bool:
     return os.getenv("RECORD_MEETING", "true").lower() in ("1", "true", "yes")
 
 
+def guest_fallback_enabled() -> bool:
+    return os.getenv("BOT_GUEST_FALLBACK", "true").lower() in ("1", "true", "yes")
+
+
 def audio_file_for(session_id: str) -> Path:
     return RECORDINGS_DIR / f"{session_id}_audio.webm"
 
@@ -182,6 +186,7 @@ class MeetBot:
         self._context_opened_at: float | None = None
         self._meeting_started_at: float | None = None
         self._admitted: bool = False
+        self._guest_mode: bool = False
 
     async def _status(self, message: str) -> None:
         if self._started_at is None:
@@ -190,18 +195,49 @@ class MeetBot:
         elapsed = max(0, int(time.time() - self._started_at))
         await self.on_status(f"[{elapsed:02d}s] {message}")
 
+    def _reset_capture_state(self) -> None:
+        if self._audio_path:
+            try:
+                self._audio_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+        self._audio_path = None
+        self._audio_chunks = 0
+        self._context_opened_at = None
+
+    async def _prepare_audio_capture(self, ctx) -> None:
+        # Audio bytes flow page -> Python via this exposed function.
+        apath = audio_file_for(self.session_id)
+        apath.parent.mkdir(parents=True, exist_ok=True)
+        apath.unlink(missing_ok=True)
+        self._audio_path = apath
+        self._audio_chunks = 0
+
+        import base64 as _b64
+
+        async def _recv_audio(b64: str) -> None:
+            try:
+                with open(apath, "ab") as f:
+                    f.write(_b64.b64decode(b64))
+                self._audio_chunks += 1
+            except Exception as e:
+                logger.warning("audio write failed: %s", e)
+
+        await ctx.expose_function("__atomAudio", _recv_audio)
+        await ctx.add_init_script(_AUDIO_CAPTURE_JS)
+        logger.info("Audio capture injected (session %s)", self.session_id)
+
     async def join(self) -> None:
         if not PLAYWRIGHT_AVAILABLE:
             raise RuntimeError("Run: pip install playwright && playwright install chromium")
 
         self._started_at = time.time()
         slot = _pick_auth_slot()
-        if slot is None:
+        if slot is None and not guest_fallback_enabled():
             await self._status("⚠️ No Google session — click 'sign in as atom' first")
             raise RuntimeError("No signed-in Chrome profile. Run sign-in first.")
-        pdir = profile_dir(slot)
-        state_path = storage_state_path(slot)
-        use_storage_state = state_path.exists()
+        if slot is None:
+            await self._status("No bot Google profile found — trying guest join…")
 
         recording = record_enabled()
 
@@ -247,45 +283,42 @@ class MeetBot:
                 ctx_kwargs["record_video_size"] = {"width": rw, "height": rh}
                 logger.info("Video recording enabled → %s (%dx%d)", RECORDINGS_DIR, rw, rh)
 
-            browser = None
-            if use_storage_state:
-                browser = await pw.chromium.launch(**launch_kwargs)
-                ctx = await browser.new_context(
-                    storage_state=str(state_path),
-                    **ctx_kwargs,
-                )
-                logger.info("Launched Chrome with storage state %s", state_path)
-            else:
-                ctx = await pw.chromium.launch_persistent_context(
+            async def open_context(use_guest: bool):
+                browser_obj = None
+                if use_guest:
+                    browser_obj = await pw.chromium.launch(**launch_kwargs)
+                    context = await browser_obj.new_context(**ctx_kwargs)
+                    logger.info("Launched Chrome with guest context")
+                    return browser_obj, context
+
+                pdir = profile_dir(slot)
+                state_path = storage_state_path(slot)
+                use_storage_state = state_path.exists()
+                if use_storage_state:
+                    browser_obj = await pw.chromium.launch(**launch_kwargs)
+                    context = await browser_obj.new_context(
+                        storage_state=str(state_path),
+                        **ctx_kwargs,
+                    )
+                    logger.info("Launched Chrome with storage state %s", state_path)
+                    return browser_obj, context
+
+                context = await pw.chromium.launch_persistent_context(
                     user_data_dir=str(pdir),
                     **launch_kwargs,
                     **ctx_kwargs,
                 )
                 logger.info("Launched Chrome with profile %s", pdir)
+                return None, context
+
+            browser, ctx = await open_context(use_guest=slot is None)
+            self._guest_mode = slot is None
 
             await ctx.add_init_script(
                 "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
             )
             if recording:
-                # Audio bytes flow page → Python via this exposed function (no network/CORS)
-                apath = audio_file_for(self.session_id)
-                apath.parent.mkdir(parents=True, exist_ok=True)
-                apath.unlink(missing_ok=True)
-                self._audio_path = apath
-                self._audio_chunks = 0
-
-                import base64 as _b64
-                async def _recv_audio(b64: str) -> None:
-                    try:
-                        with open(apath, "ab") as f:
-                            f.write(_b64.b64decode(b64))
-                        self._audio_chunks += 1
-                    except Exception as e:
-                        logger.warning("audio write failed: %s", e)
-
-                await ctx.expose_function("__atomAudio", _recv_audio)
-                await ctx.add_init_script(_AUDIO_CAPTURE_JS)
-                logger.info("Audio capture injected (session %s)", self.session_id)
+                await self._prepare_audio_capture(ctx)
 
             self._page = ctx.pages[0] if ctx.pages else await ctx.new_page()
             # Surface page console logs (look for [ATOM] audio messages)
@@ -299,9 +332,36 @@ class MeetBot:
             await asyncio.sleep(2.5)
             await self._screenshot("01_loaded")
             if await self._is_private_google_screen():
-                raise RuntimeError(
-                    "Bot Google profile is signed out. Reconnect Atom's bot profile in /admin before recording."
+                if not guest_fallback_enabled() or self._guest_mode:
+                    raise RuntimeError(
+                        "Atom could not open this Meet. The meeting may require a signed-in Google account or host admission."
+                    )
+                await self._status("Bot profile is signed out — retrying as guest…")
+                failed_video = self._page.video if recording else None
+                await ctx.close()
+                if browser is not None:
+                    await browser.close()
+                if failed_video is not None:
+                    try:
+                        Path(await failed_video.path()).unlink(missing_ok=True)
+                    except Exception as exc:
+                        logger.warning("Could not remove failed preflight video: %s", exc)
+                self._reset_capture_state()
+                browser, ctx = await open_context(use_guest=True)
+                self._guest_mode = True
+                await ctx.add_init_script(
+                    "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
                 )
+                if recording:
+                    await self._prepare_audio_capture(ctx)
+                self._page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+                self._page.on("console", lambda m: (
+                    logger.info("PAGE: %s", m.text) if "[ATOM]" in m.text else None
+                ))
+                self._context_opened_at = time.time()
+                await self._page.goto(self.url, wait_until="domcontentloaded", timeout=30_000)
+                await asyncio.sleep(2.5)
+                await self._screenshot("01_loaded_guest")
 
             await self._dismiss_popups()
             await self._set_name()
@@ -544,7 +604,7 @@ class MeetBot:
                 pass
             if await self._is_private_google_screen():
                 raise RuntimeError(
-                    "Bot Google profile is signed out. Reconnect Atom's bot profile in /admin before recording."
+                    "Atom could not open this Meet. The meeting may require a signed-in Google account or host admission."
                 )
             await asyncio.sleep(1.5)
         raise RuntimeError("Atom was not admitted to the meeting, so no recording was saved.")

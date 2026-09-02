@@ -613,7 +613,7 @@ html[data-theme="dark"] .dash-nav, html[data-theme="dark"] .topbar { background:
 <script>
 let ws=null, timerID=null, timerStart=null, pendingJoin=null, wsRetry=0, loggedIn=false, joining=false;
 let driveAccessToken='', driveTokenExpiresAt=0, driveTokenClient=null, driveTokenRequest=null;
-let appConfig={google_client_id:'', gmail_enabled:false, auth_ready:false};
+let appConfig={google_client_id:'', gmail_enabled:false, auth_ready:false, bot_google_profile:false, bot_guest_fallback:true};
 let stageTrail=[];
 const API_BASE = (window.ATOM_API_BASE || '').replace(/\/$/, '');
 
@@ -683,10 +683,6 @@ async function joinMeeting() {
   }
   const rawUrl=(document.getElementById('heroUrl').value||'').trim();
   const url=normalizeMeetUrl(rawUrl);
-  if (!appConfig.auth_ready) {
-    setOpsState('warn', 'bot Google profile is not ready - open /admin after deployment and complete bot sign-in');
-    return;
-  }
   if (!url) {
     const inp=document.getElementById('heroUrl');
     inp.style.outline='2px solid var(--red)';
@@ -795,8 +791,8 @@ function setOpsState(kind, text) {
 function refreshOpsState() {
   if (!appConfig.google_client_id) {
     setOpsState('bad', 'Google user auth is not configured - set GOOGLE_CLIENT_ID before deployment');
-  } else if (!appConfig.auth_ready) {
-    setOpsState('warn', 'bot Google profile is not ready - open /admin and complete bot sign-in');
+  } else if (!appConfig.bot_google_profile) {
+    setOpsState('warn', 'ready with guest bot fallback - some restricted Meets may still ask the host to admit Atom');
   } else if (!appConfig.gmail_enabled) {
     setOpsState('warn', 'Gmail delivery is not configured - delivery email may fail, but server files are still removed');
   } else {

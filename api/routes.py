@@ -133,7 +133,9 @@ def _snapshot_health() -> dict:
         "users": user_count(),
         "sessions": session_count(),
         "active_sessions": len(_active),
-        "auth_ready": has_auth(),
+        "auth_ready": True,
+        "bot_google_profile": has_auth(),
+        "bot_guest_fallback": True,
         "s3_enabled": s3_enabled(),
         "gmail_enabled": gmail_enabled(),
         "google_auth_enabled": bool(google_client_id()),
@@ -150,9 +152,10 @@ def _snapshot_readiness() -> dict:
         "google_client_id": bool(google_client_id()),
         "gmail": gmail_enabled(),
         "bot_google_profile": has_auth(),
+        "bot_guest_fallback": True,
     }
     return {
-        "ok": all(checks.values()),
+        "ok": checks["database"] and checks["recordings_dir"] and checks["google_client_id"] and checks["gmail"],
         "checks": checks,
         "health": _snapshot_health(),
     }
@@ -240,7 +243,9 @@ async def app_config() -> JSONResponse:
     return JSONResponse({
         "google_client_id": google_client_id(),
         "gmail_enabled": gmail_enabled(),
-        "auth_ready": has_auth(),
+        "auth_ready": True,
+        "bot_google_profile": has_auth(),
+        "bot_guest_fallback": True,
     })
 
 
