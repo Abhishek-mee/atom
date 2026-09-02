@@ -209,7 +209,7 @@ class MeetBot:
             rw = int(os.getenv("REC_WIDTH", "1280"))
             rh = int(os.getenv("REC_HEIGHT", "720"))
 
-            shared_ctx_kwargs = dict(
+            launch_kwargs = dict(
                 headless=True,
                 args=CHROME_ARGS + [
                     # Auto-grant the permission prompt, but DON'T supply a fake
@@ -228,34 +228,33 @@ class MeetBot:
                     "--renderer-process-limit=2",
                     "--js-flags=--max-old-space-size=512",
                 ],
+            )
+            ctx_kwargs = dict(
                 permissions=["microphone", "camera"],
                 viewport={"width": rw, "height": rh},
             )
             _ch = browser_channel()
             if _ch:
-                shared_ctx_kwargs["channel"] = _ch   # real Chrome (macOS/x86); else bundled Chromium
+                launch_kwargs["channel"] = _ch   # real Chrome (macOS/x86); else bundled Chromium
             if recording:
                 RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
-                shared_ctx_kwargs["record_video_dir"]  = str(RECORDINGS_DIR)
-                shared_ctx_kwargs["record_video_size"] = {"width": rw, "height": rh}
+                ctx_kwargs["record_video_dir"] = str(RECORDINGS_DIR)
+                ctx_kwargs["record_video_size"] = {"width": rw, "height": rh}
                 logger.info("Video recording enabled → %s (%dx%d)", RECORDINGS_DIR, rw, rh)
 
             browser = None
             if use_storage_state:
-                browser = await pw.chromium.launch(
-                    headless=True,
-                    args=shared_ctx_kwargs.pop("args"),
-                    **({"channel": shared_ctx_kwargs.pop("channel")} if "channel" in shared_ctx_kwargs else {}),
-                )
+                browser = await pw.chromium.launch(**launch_kwargs)
                 ctx = await browser.new_context(
                     storage_state=str(state_path),
-                    **shared_ctx_kwargs,
+                    **ctx_kwargs,
                 )
                 logger.info("Launched Chrome with storage state %s", state_path)
             else:
                 ctx = await pw.chromium.launch_persistent_context(
                     user_data_dir=str(pdir),
-                    **shared_ctx_kwargs,
+                    **launch_kwargs,
+                    **ctx_kwargs,
                 )
                 logger.info("Launched Chrome with profile %s", pdir)
 
