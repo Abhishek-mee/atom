@@ -371,13 +371,17 @@ async def meeting_ws(ws: WebSocket) -> None:
                 url = msg.get("url", "").strip()
                 drive_token = msg.get("drive_token", "").strip()
                 if not url:
-                    await send({"type": "error", "message": "No meeting URL provided."})
+                    await send({"type": "error", "code": "missing_meet_url", "message": "No meeting URL provided."})
                     continue
                 if not drive_token:
-                    await send({"type": "error", "message": "Google Drive permission is required before recording."})
+                    await send({
+                        "type": "error",
+                        "code": "drive_permission_required",
+                        "message": "Google Drive permission is required before recording.",
+                    })
                     continue
                 if bot_task and not bot_task.done():
-                    await send({"type": "error", "message": "Already in a meeting."})
+                    await send({"type": "error", "code": "meeting_already_running", "message": "Already in a meeting."})
                     continue
 
                 async def on_status(text: str) -> None:

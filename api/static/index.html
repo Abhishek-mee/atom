@@ -604,7 +604,7 @@ html[data-theme="dark"] .dash-nav, html[data-theme="dark"] .topbar { background:
 </div>
 
 <script>
-let ws=null, timerID=null, timerStart=null, pendingJoin=null, wsRetry=0, loggedIn=false;
+let ws=null, timerID=null, timerStart=null, pendingJoin=null, wsRetry=0, loggedIn=false, joining=false;
 let driveAccessToken='', driveTokenExpiresAt=0, driveTokenClient=null, driveTokenRequest=null;
 let appConfig={google_client_id:'', gmail_enabled:false, auth_ready:false};
 let stageTrail=[];
@@ -651,10 +651,11 @@ function ensureWS() {
 
 function handle(m) {
   if (m.type==='status') {
-    const t = m.message.toLowerCase();
+    const clean = stripStage(m.message).toLowerCase();
+    const t = clean;
     setStatus(m.message);
     pushStage(m.message);
-    if (t.includes('recording'))     { setRec(true); startTimer(); }
+    if (/^recording[.…]*$/.test(t)) { joining=false; resetJoinButton(); setRec(true); startTimer(); }
     if (t.includes('wrapping')||t.includes('everyone left')||t.includes('saving')||t.includes('stopping')) { setRec(false); stopTimer(); setHeadline('finishing up…'); }
   }
   if (m.type==='participant_count') setPax(m.count);
@@ -664,7 +665,7 @@ function handle(m) {
     if (document.getElementById('app').classList.contains('in')) showResult(m.entry);
     loadLibrary();
   }
-  if (m.type==='error') { setStatus('⚠ '+m.message); setRec(false); }
+  if (m.type==='error') failJoin(m.message || 'Could not join the meeting.', m.code || '');
 }
 
 async function joinMeeting() {
@@ -682,13 +683,22 @@ async function joinMeeting() {
     const inp=document.getElementById('heroUrl');
     inp.style.outline='2px solid var(--red)'; setTimeout(()=>inp.style.outline='',1500); return;
   }
+  joining=true;
+  const btn=document.getElementById('heroBtn');
+  btn.disabled=true;
+  btn.textContent='checking access...';
   setOpsState('ready', 'requesting Google Drive permission for delivery');
   const driveToken = await requestDriveToken();
   if (!driveToken) {
+    joining=false;
+    resetJoinButton();
+    stopTimer();
+    setRec(false);
     setOpsState('warn', 'Google Drive permission is required so Atom can deliver the recording and delete the server copy');
     return;
   }
   document.getElementById('topUrl').textContent = url.replace('https://','');
+  resetRunMetrics();
   showApp(); setStatus('connecting…'); setHeadline('joining meeting…');
   resetStageTrail();
   document.getElementById('result').style.display='none';
@@ -698,13 +708,42 @@ async function joinMeeting() {
   else { pendingJoin=payload; ensureWS(); }
 }
 
+function failJoin(message, code) {
+  joining=false;
+  pendingJoin=null;
+  resetJoinButton();
+  stopTimer();
+  setRec(false);
+  resetRunMetrics();
+  setStatus('⚠ '+message);
+  pushStage(message);
+  setOpsState('warn', message);
+  if (code==='drive_permission_required' || code==='missing_meet_url' || code==='meeting_already_running') {
+    showIdle(false);
+  } else {
+    setHeadline('joining failed');
+  }
+}
+
+function resetJoinButton() {
+  const btn=document.getElementById('heroBtn');
+  if (!btn) return;
+  btn.disabled=false;
+  btn.textContent='join, record, send';
+}
+
 function leaveMeeting() {
   if (ws && ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify({action:'leave'}));
   stopTimer(); setRec(false); showIdle();
 }
 
 function showApp()  { document.getElementById('idle').classList.add('out'); document.getElementById('app').classList.add('in'); }
-function showIdle() { document.getElementById('idle').classList.remove('out'); document.getElementById('app').classList.remove('in'); document.getElementById('heroUrl').value=''; loadLibrary(); }
+function showIdle(clearUrl=true) {
+  document.getElementById('idle').classList.remove('out');
+  document.getElementById('app').classList.remove('in');
+  if (clearUrl) document.getElementById('heroUrl').value='';
+  loadLibrary();
+}
 
 function goHome() {
   // Return to the home screen from any state. A recording in progress keeps
@@ -777,7 +816,15 @@ function startTimer() {
 }
 function stopTimer() { clearInterval(timerID); timerID=null; }
 
+function resetRunMetrics() {
+  stopTimer();
+  document.getElementById('durVal').textContent = '0:00';
+  document.getElementById('paxVal').textContent = '-';
+}
+
 function showResult(entry) {
+  joining=false;
+  resetJoinButton();
   setRec(false); stopTimer();
   document.getElementById('recState').style.display='none';
   const r=document.getElementById('result');
