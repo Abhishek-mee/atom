@@ -329,6 +329,16 @@ async def index() -> HTMLResponse:
     return HTMLResponse((STATIC_DIR / "index.html").read_text(encoding="utf-8"))
 
 
+@app.get("/privacy", response_class=HTMLResponse)
+async def privacy() -> HTMLResponse:
+    return HTMLResponse((STATIC_DIR / "privacy.html").read_text(encoding="utf-8"))
+
+
+@app.get("/terms", response_class=HTMLResponse)
+async def terms() -> HTMLResponse:
+    return HTMLResponse((STATIC_DIR / "terms.html").read_text(encoding="utf-8"))
+
+
 @app.get("/config.js")
 async def frontend_config() -> HTMLResponse:
     return HTMLResponse(

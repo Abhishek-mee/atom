@@ -96,12 +96,14 @@ Minimum production requirements:
 - `ADMIN_TOKEN` to protect bot-profile setup endpoints.
 - Persistent volume mounted at `/app/data` for `atom.db`, recordings, debug captures, and the bot Chrome profile.
 - Gmail app password configured through `GMAIL_SMTP_USER` and `GMAIL_APP_PASSWORD`.
+- Google OAuth app published to Production and verified if Google requests it; Testing mode only works for listed test users.
 
 Useful production endpoints:
 
 - `/health` - liveness.
 - `/ready` - deployment readiness checks.
 - `/admin` - bot profile and service readiness panel.
+- `/privacy` and `/terms` - public links for Google OAuth consent review.
 
 GitHub Pages is supported for the static frontend through `.github/workflows/pages.yml`; the backend is configured for Railway through `Dockerfile` and `railway.json`.
 

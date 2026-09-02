@@ -74,7 +74,7 @@ BROWSER_CHANNEL=
 GMAIL_SMTP_USER=your-sender@gmail.com
 GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx
 GMAIL_FROM_EMAIL=your-sender@gmail.com
-EMAIL_ATTACH_LIMIT_MB=20
+EMAIL_ATTACH_LIMIT_MB=0
 ```
 
 For S3-backed playback links, also set:
@@ -89,15 +89,50 @@ S3_PRESIGN_DAYS=7
 S3_KEEP_LOCAL=false
 ```
 
-## Google OAuth setup
+## Google OAuth setup for public users
 
-In Google Cloud Console, create an OAuth Web Client and add your deployed frontend origin:
+Atom cannot automatically connect every user's Google Drive while the Google OAuth app is in Testing mode. Testing mode only allows developer-approved test users. For public Gmail users, move the OAuth app through Google's production and verification flow.
+
+In Google Cloud Console, configure the OAuth consent screen:
+
+1. Set User type to External.
+2. Add the app name, user support email, developer contact email, and app logo if used.
+3. Add these public app links:
+
+```text
+Home page: https://atom.abhishek-meena.in
+Privacy policy: https://atom.abhishek-meena.in/privacy
+Terms of service: https://atom.abhishek-meena.in/terms
+```
+
+4. Add only the scopes Atom needs:
+
+```text
+openid
+email
+profile
+https://www.googleapis.com/auth/drive.file
+```
+
+5. Add `abhishek-meena.in` as an authorized domain.
+6. Publish the app to Production.
+7. If Google marks the scopes as sensitive or requests verification, submit the verification form and include a short demo video showing:
+   - Google sign-in.
+   - User granting Drive permission.
+   - User pasting a Google Meet link.
+   - Atom uploading the finished recording to that user's Drive.
+   - Atom deleting the temporary server copy.
+
+Create an OAuth Web Client and add your deployed frontend origins:
 
 ```text
 https://atom.abhishek-meena.in
+https://abhishek-mee.github.io
 ```
 
 Use the resulting client ID as `GOOGLE_CLIENT_ID`.
+
+Until the OAuth app is published and verification is accepted, add each Gmail address under Test users or Google will show `Error 403: access_denied`.
 
 ## GitHub Pages frontend
 

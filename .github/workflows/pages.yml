@@ -30,6 +30,8 @@ jobs:
           rm -rf public
           mkdir -p public
           cp api/static/index.html public/index.html
+          cp api/static/privacy.html public/privacy.html
+          cp api/static/terms.html public/terms.html
           cp api/static/config.js public/config.local.js
           cp pages/config.js public/config.js
           cp pages/CNAME public/CNAME
