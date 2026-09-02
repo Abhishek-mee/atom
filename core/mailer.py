@@ -69,6 +69,7 @@ def _send_sync(entry: dict, recipient: str, local_path: Path | None) -> dict:
     title = entry.get("title") or "meeting"
     filename = entry.get("filename") or "recording.mp4"
     playback_url = _absolute_url(entry.get("url"))
+    drive_url = (entry.get("drive_delivery") or {}).get("url") or entry.get("drive_url")
 
     msg["Subject"] = f"Atom recording ready: {title}"
     msg["From"] = _from_email()
@@ -81,6 +82,8 @@ def _send_sync(entry: dict, recipient: str, local_path: Path | None) -> dict:
     ]
     if playback_url:
         body += ["", f"Recording link: {playback_url}"]
+    if drive_url:
+        body += ["", f"Google Drive: {drive_url}"]
 
     should_attach = bool(
         local_path and local_path.exists() and local_path.stat().st_size <= _attach_limit_bytes()
@@ -89,9 +92,9 @@ def _send_sync(entry: dict, recipient: str, local_path: Path | None) -> dict:
         body += ["", "The recording is attached to this email."]
     elif local_path and local_path.exists():
         limit_mb = _attach_limit_bytes() // (1024 * 1024)
-        body += ["", f"The file is larger than {limit_mb} MB, so Atom kept it in your library."]
-    elif not playback_url:
-        body += ["", "The recording is available in your Atom library."]
+        body += ["", f"The file is larger than {limit_mb} MB, so use the Google Drive link above."]
+    elif not playback_url and not drive_url:
+        body += ["", "Atom could not create a recording link. Please try again."]
 
     msg.set_content("\n".join(body))
 

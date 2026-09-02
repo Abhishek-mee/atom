@@ -1,6 +1,7 @@
 """
 FastAPI app - serves the single-page UI and handles WebSocket sessions.
-Core flow: receive a Meet invite, join, record audio+video, and send it by Gmail.
+Core flow: receive a Meet invite, join, record audio+video, send it to Gmail/Drive,
+and remove Atom's temporary server copy.
 """
 from __future__ import annotations
 
@@ -17,13 +18,16 @@ from fastapi.staticfiles import StaticFiles
 
 from config.settings import settings
 from core.database import DB_PATH, init_db
+from core.drive import upload_recording_to_drive
 from core.mailer import gmail_enabled, send_recording_email
 from core.storage import (
     add_recording,
+    cleanup_recording_files,
     delete_recording,
     list_recordings,
     s3_enabled,
     update_recording_delivery,
+    update_recording_drive_delivery,
 )
 from core.users import (
     google_client_id, verify_google_credential, get_or_create_user,
@@ -253,7 +257,7 @@ async def auth_logout(request: Request) -> JSONResponse:
     return resp
 
 
-# ── Recordings library (per user) ─────────────────────────────────────────────
+# ── Recording delivery history (per user) ─────────────────────────────────────
 @app.get("/recordings")
 async def get_recordings(request: Request) -> JSONResponse:
     user = user_for_session(request.cookies.get(SESSION_COOKIE))
@@ -341,8 +345,12 @@ async def meeting_ws(ws: WebSocket) -> None:
                     await send({"type": "error", "message": "Please sign in first."})
                     continue
                 url = msg.get("url", "").strip()
+                drive_token = msg.get("drive_token", "").strip()
                 if not url:
                     await send({"type": "error", "message": "No meeting URL provided."})
+                    continue
+                if not drive_token:
+                    await send({"type": "error", "message": "Google Drive permission is required before recording."})
                     continue
                 if bot_task and not bot_task.done():
                     await send({"type": "error", "message": "Already in a meeting."})
@@ -374,27 +382,36 @@ async def meeting_ws(ws: WebSocket) -> None:
                     try:
                         await bot.join()
                         if bot.recording_path:
-                            if s3_enabled():
-                                await send({"type": "status", "message": "Uploading to cloud..."})
                             local = RECORDINGS_DIR / Path(bot.recording_path).name
                             entry = await add_recording(
                                 local, meet_code=meet_code, user_sub=user["sub"]
                             )
-                            await send({"type": "status", "message": "Sending recording with Gmail..."})
-                            delivery = await send_recording_email(
-                                entry=entry,
-                                recipient=user["email"],
-                                local_path=local,
-                            )
-                            update_recording_delivery(entry["id"], user["sub"], delivery)
-                            entry["email_delivery"] = delivery
+                            try:
+                                await send({"type": "status", "message": "Uploading recording to your Google Drive..."})
+                                drive_delivery = await upload_recording_to_drive(
+                                    access_token=drive_token,
+                                    local_path=local,
+                                    entry=entry,
+                                )
+                                update_recording_drive_delivery(entry["id"], user["sub"], drive_delivery)
+                                entry["drive_delivery"] = drive_delivery
+
+                                await send({"type": "status", "message": "Sending recording email..."})
+                                delivery_entry = {**entry, "drive_url": drive_delivery.get("url")}
+                                delivery = await send_recording_email(
+                                    entry=delivery_entry,
+                                    recipient=user["email"],
+                                    local_path=local,
+                                )
+                                update_recording_delivery(entry["id"], user["sub"], delivery)
+                                entry["email_delivery"] = delivery
+                            finally:
+                                cleanup_recording_files(local)
                             await send({"type": "recording", "entry": entry})
-                            if delivery["status"] == "sent":
-                                await send({"type": "status", "message": "Recording ready and sent to Gmail"})
-                            elif delivery["status"] == "skipped":
-                                await send({"type": "status", "message": "Recording ready - Gmail delivery not configured"})
+                            if entry.get("drive_delivery", {}).get("status") == "uploaded" and entry.get("email_delivery", {}).get("status") == "sent":
+                                await send({"type": "status", "message": "Recording sent to Gmail and Google Drive"})
                             else:
-                                await send({"type": "status", "message": "Recording ready - Gmail delivery failed"})
+                                await send({"type": "status", "message": "Recording finished - delivery needs attention"})
                         else:
                             await send({"type": "status", "message": "Meeting ended (no recording captured)"})
                     except Exception as e:
@@ -413,5 +430,5 @@ async def meeting_ws(ws: WebSocket) -> None:
     except WebSocketDisconnect:
         # Do NOT cancel the recording. The socket may drop or reconnect, but the
         # bot keeps recording and finalizes server-side — the finished MP4 still
-        # lands in the user's library. (Explicit "leave" is the only stop.)
+        # is delivered server-side. (Explicit "leave" is the only stop.)
         logger.info("WebSocket disconnected; recording continues in background")

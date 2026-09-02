@@ -53,6 +53,11 @@ def init_db() -> None:
                 email_delivery_message TEXT,
                 email_delivery_attached INTEGER NOT NULL DEFAULT 0,
                 email_delivery_updated_at INTEGER,
+                drive_delivery_status TEXT,
+                drive_delivery_message TEXT,
+                drive_file_id TEXT,
+                drive_url TEXT,
+                drive_delivery_updated_at INTEGER,
                 FOREIGN KEY (user_sub) REFERENCES users(sub) ON DELETE CASCADE
             );
 
@@ -61,6 +66,20 @@ def init_db() -> None:
                 ON recordings(user_sub, created_at DESC);
             """
         )
+        _ensure_columns(conn, "recordings", {
+            "drive_delivery_status": "TEXT",
+            "drive_delivery_message": "TEXT",
+            "drive_file_id": "TEXT",
+            "drive_url": "TEXT",
+            "drive_delivery_updated_at": "INTEGER",
+        })
+
+
+def _ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+    existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+    for name, ddl in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
 
 
 def migrate_json_files() -> None:

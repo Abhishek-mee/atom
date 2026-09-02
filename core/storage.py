@@ -1,11 +1,8 @@
 """
-Storage layer for Atom (SaaS model).
+Storage layer for Atom.
 
-- S3 is OPERATOR infrastructure, configured once via server env vars.
-  End users never see or configure it.
-- Every finished recording is uploaded to the operator bucket and indexed in
-  SQLite. The main page shows the library.
-- Playback URLs are presigned on demand (so they never go stale in the index).
+Completed recordings are delivered to the user by email and Google Drive. Atom
+keeps only session metadata and delivery status after the final file is sent.
 """
 from __future__ import annotations
 
@@ -77,9 +74,7 @@ def _probe_duration(path: Path) -> int:
 
 
 async def add_recording(local_path: Path, meet_code: str = "", user_sub: str = "") -> dict:
-    """Upload to S3 (if configured), index in the library, return the entry."""
-    import asyncio, functools
-
+    """Index a completed session and return the metadata entry."""
     size = local_path.stat().st_size if local_path.exists() else 0
     duration = _probe_duration(local_path) if local_path.exists() else 0
     entry = {
@@ -93,24 +88,6 @@ async def add_recording(local_path: Path, meet_code: str = "", user_sub: str = "
         "filename": local_path.name,
         "s3_key": None,
     }
-
-    if s3_enabled():
-        c = _s3_cfg()
-        key = (c["prefix"] or "").lstrip("/") + local_path.name
-
-        def _upload():
-            _client().upload_file(
-                str(local_path), c["bucket"], key,
-                ExtraArgs={"ContentType": "video/mp4"},
-            )
-        try:
-            await asyncio.get_event_loop().run_in_executor(None, functools.partial(_upload))
-            entry["s3_key"] = key
-            logger.info("Uploaded to s3://%s/%s", c["bucket"], key)
-            if not c["keep_local"]:
-                local_path.unlink(missing_ok=True)
-        except Exception as e:
-            logger.error("S3 upload failed: %s", e)
 
     with connect() as conn:
         conn.execute(
@@ -147,7 +124,7 @@ def _decorate(e: dict) -> dict:
 
 
 def list_recordings(user_sub: str = "") -> list[dict]:
-    """Return this user's recordings with fresh playback URLs."""
+    """Return this user's delivered recording sessions."""
     out = []
     query = "SELECT * FROM recordings"
     params: tuple = ()
@@ -157,9 +134,7 @@ def list_recordings(user_sub: str = "") -> list[dict]:
     query += " ORDER BY created_at DESC"
     with connect() as conn:
         for row in conn.execute(query, params):
-            d = _decorate(_row_to_entry(row))
-            if d["url"]:
-                out.append(d)
+            out.append(_decorate(_row_to_entry(row)))
     return out
 
 
@@ -184,6 +159,47 @@ def update_recording_delivery(rec_id: str, user_sub: str, delivery: dict) -> Non
                 user_sub,
             ),
         )
+
+
+def update_recording_drive_delivery(rec_id: str, user_sub: str, delivery: dict) -> None:
+    """Persist Google Drive delivery status for a user's recording."""
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE recordings
+            SET drive_delivery_status = ?,
+                drive_delivery_message = ?,
+                drive_file_id = ?,
+                drive_url = ?,
+                drive_delivery_updated_at = ?
+            WHERE id = ? AND user_sub = ?
+            """,
+            (
+                delivery.get("status", "unknown"),
+                delivery.get("message", ""),
+                delivery.get("file_id"),
+                delivery.get("url"),
+                int(time.time()),
+                rec_id,
+                user_sub,
+            ),
+        )
+
+
+def cleanup_recording_files(local_path: Path | None) -> None:
+    """Remove completed recording artifacts from Atom local storage."""
+    if not local_path:
+        return
+    candidates = {
+        local_path,
+        RECORDINGS_DIR / local_path.name,
+        RECORDINGS_DIR / f"{local_path.stem}_audio.webm",
+    }
+    for path in candidates:
+        try:
+            path.unlink(missing_ok=True)
+        except Exception as exc:
+            logger.warning("Could not remove recording artifact %s: %s", path, exc)
 
 
 def delete_recording(rec_id: str, user_sub: str) -> bool:
@@ -233,5 +249,13 @@ def _row_to_entry(row) -> dict:
             "message": row["email_delivery_message"] or "",
             "attached": bool(row["email_delivery_attached"]),
             "updated_at": row["email_delivery_updated_at"],
+        }
+    if "drive_delivery_status" in row.keys() and row["drive_delivery_status"]:
+        entry["drive_delivery"] = {
+            "status": row["drive_delivery_status"],
+            "message": row["drive_delivery_message"] or "",
+            "file_id": row["drive_file_id"],
+            "url": row["drive_url"],
+            "updated_at": row["drive_delivery_updated_at"],
         }
     return entry

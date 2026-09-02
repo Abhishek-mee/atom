@@ -395,7 +395,7 @@ html[data-theme="dark"] .dash-nav, html[data-theme="dark"] .topbar { background:
         <div class="login-name">atom</div>
         <div class="login-lead">
           Atom demonstrates the core loop first: give it a Google Meet invite, it joins by itself,
-          records the meeting, then sends the finished recording to your Gmail.
+          records the meeting, sends it to your Gmail and Drive, then removes Atom's temporary server copy.
         </div>
         <div class="login-points">
           <span class="login-point">gmeet invite</span>
@@ -405,11 +405,11 @@ html[data-theme="dark"] .dash-nav, html[data-theme="dark"] .topbar { background:
         </div>
         <div class="login-action waiting" id="loginAction">
           <div class="login-action-head">user auth required</div>
-          <div class="login-action-copy">Sign in with Google to open Atom, save sessions to your account, and send finished recordings to your Gmail.</div>
+          <div class="login-action-copy">Sign in with Google to open Atom, save delivery history to your account, and send finished recordings to your Gmail and Drive.</div>
           <div id="gsi"></div>
           <div class="login-status waiting" id="loginStatus">checking authentication</div>
         </div>
-        <div class="login-note" id="loginNote">Your Google profile is used only for account access, recording ownership, and Gmail delivery.</div>
+        <div class="login-note" id="loginNote">Your Google profile is used only for account access, recording ownership, Gmail delivery, and Drive upload.</div>
       </div>
       <div class="login-meter">
         <div class="login-metric"><div class="v">01</div><div class="l">paste invite</div></div>
@@ -445,9 +445,9 @@ html[data-theme="dark"] .dash-nav, html[data-theme="dark"] .topbar { background:
           <div class="price-amt">send</div>
           <div class="price-sub">the finished file is delivered</div>
           <ul class="price-list">
-            <li>Gmail SMTP delivery</li>
-            <li>MP4 download fallback</li>
-            <li>recording library</li>
+            <li>Gmail delivery</li>
+            <li>Google Drive upload</li>
+            <li>server copy cleanup</li>
           </ul>
         </div>
       </div>
@@ -489,7 +489,7 @@ html[data-theme="dark"] .dash-nav, html[data-theme="dark"] .topbar { background:
       <section class="dash-panel dash-hero">
         <div class="dash-kicker">new recording</div>
         <div class="dash-title">Paste a Google Meet link and let Atom handle the session.</div>
-        <div class="dash-copy">Atom joins the Meet online, records audio and video, saves it to your library, and sends the finished recording to your Gmail.</div>
+        <div class="dash-copy">Atom joins the Meet online, records audio and video, uploads the finished file to your Google Drive, emails you the recording, then deletes its temporary server copy.</div>
         <div class="hero-card">
           <input class="hero-input" id="heroUrl" type="url" placeholder="paste your Google Meet link" autocomplete="off" onkeydown="if(event.key==='Enter') joinMeeting()"/>
           <div class="hero-footer">
@@ -579,20 +579,21 @@ html[data-theme="dark"] .dash-nav, html[data-theme="dark"] .topbar { background:
 
     <!-- result -->
     <div class="result" id="result" style="display:none">
-      <div class="result-badge">recording ready</div>
-      <video class="result-video" id="resultVideo" controls preload="metadata"></video>
+      <div class="result-badge">delivery complete</div>
+      <video class="result-video" id="resultVideo" controls preload="metadata" style="display:none"></video>
       <div class="result-actions">
-        <a class="dl-btn" id="dlBtn" href="#" download="atom-meeting.mp4">download mp4</a>
+        <a class="dl-btn" id="dlBtn" href="#" target="_blank">open in Drive</a>
         <button class="again-btn" onclick="goHome()">record another</button>
       </div>
-      <div class="delivery-state" id="deliveryState">gmail delivery pending</div>
-      <div class="result-hint">full meeting recording - audio + video</div>
+      <div class="delivery-state" id="deliveryState">Gmail and Drive delivery pending</div>
+      <div class="result-hint">Atom deletes its temporary recording after delivery</div>
     </div>
   </div>
 </div>
 
 <script>
-let ws=null, timerID=null, timerStart=null, pendingUrl=null, wsRetry=0, loggedIn=false;
+let ws=null, timerID=null, timerStart=null, pendingJoin=null, wsRetry=0, loggedIn=false;
+let driveAccessToken='', driveTokenExpiresAt=0, driveTokenClient=null, driveTokenRequest=null;
 let appConfig={google_client_id:'', gmail_enabled:false, auth_ready:false};
 let stageTrail=[];
 const API_BASE = (window.ATOM_API_BASE || '').replace(/\/$/, '');
@@ -623,7 +624,7 @@ function ensureWS() {
     wsBase = `${proto}://${location.host}`;
   }
   ws = new WebSocket(`${wsBase}/ws`);
-  ws.onopen    = () => { wsRetry=0; if (pendingUrl) { ws.send(JSON.stringify({action:'join',url:pendingUrl})); pendingUrl=null; } };
+  ws.onopen    = () => { wsRetry=0; if (pendingJoin) { ws.send(JSON.stringify(pendingJoin)); pendingJoin=null; } };
   ws.onmessage = e => handle(JSON.parse(e.data));
   ws.onclose   = () => {
     ws=null;
@@ -647,14 +648,14 @@ function handle(m) {
   if (m.type==='participant_count') setPax(m.count);
   if (m.type==='recording') {
     // Only pop the result view if the user is still in the app view;
-    // if they've gone home, just refresh the library quietly.
+    // if they've gone home, just refresh the delivery history quietly.
     if (document.getElementById('app').classList.contains('in')) showResult(m.entry);
     loadLibrary();
   }
   if (m.type==='error') { setStatus('⚠ '+m.message); setRec(false); }
 }
 
-function joinMeeting() {
+async function joinMeeting() {
   if (!loggedIn) {
     showLogin();
     setLoginState('bad', 'sign in with Google first', 'Continue with Google to use Atom.');
@@ -669,13 +670,20 @@ function joinMeeting() {
     const inp=document.getElementById('heroUrl');
     inp.style.outline='2px solid var(--red)'; setTimeout(()=>inp.style.outline='',1500); return;
   }
+  setOpsState('ready', 'requesting Google Drive permission for delivery');
+  const driveToken = await requestDriveToken();
+  if (!driveToken) {
+    setOpsState('warn', 'Google Drive permission is required so Atom can deliver the recording and delete the server copy');
+    return;
+  }
   document.getElementById('topUrl').textContent = url.replace('https://','');
   showApp(); setStatus('connecting…'); setHeadline('joining meeting…');
   resetStageTrail();
   document.getElementById('result').style.display='none';
   document.getElementById('recState').style.display='flex';
-  if (ws && ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify({action:'join',url}));
-  else { pendingUrl=url; ensureWS(); }
+  const payload = {action:'join', url, drive_token:driveToken};
+  if (ws && ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify(payload));
+  else { pendingJoin=payload; ensureWS(); }
 }
 
 function leaveMeeting() {
@@ -688,7 +696,7 @@ function showIdle() { document.getElementById('idle').classList.remove('out'); d
 
 function goHome() {
   // Return to the home screen from any state. A recording in progress keeps
-  // running server-side and will appear in the library when it finishes.
+  // running server-side and will appear in delivery history when it finishes.
   document.getElementById('result').style.display='none';
   document.getElementById('recState').style.display='flex';
   showIdle();
@@ -712,9 +720,9 @@ function refreshOpsState() {
   } else if (!appConfig.auth_ready) {
     setOpsState('warn', 'bot Google profile is not ready - open /admin and complete bot sign-in');
   } else if (!appConfig.gmail_enabled) {
-    setOpsState('warn', 'Gmail delivery is not configured - recordings will still be saved in your library');
+    setOpsState('warn', 'Gmail delivery is not configured - delivery email may fail, but server files are still removed');
   } else {
-    setOpsState('ready', 'ready: Google auth, bot join, recording, database, and Gmail delivery are configured');
+    setOpsState('ready', 'ready: Google auth, Drive permission, bot join, recording, database, and Gmail delivery are configured');
   }
 }
 
@@ -762,25 +770,28 @@ function showResult(entry) {
   document.getElementById('recState').style.display='none';
   const r=document.getElementById('result');
   r.style.display='flex';
-  document.getElementById('resultVideo').src = mediaUrl(entry.url);
   const dl=document.getElementById('dlBtn');
-  dl.href = mediaUrl(entry.url);
-  dl.setAttribute('download', entry.filename || 'atom-meeting');
-  dl.textContent = '↓ download ' + (entry.filename||'').split('.').pop();
+  const drive = entry.drive_delivery || {};
+  dl.href = drive.url || '#';
+  dl.style.display = drive.url ? 'inline-flex' : 'none';
+  dl.textContent = 'open in Drive';
   const hint=document.querySelector('.result-hint');
   const delivery = entry.email_delivery || {};
   const deliveryEl = document.getElementById('deliveryState');
-  deliveryEl.className = 'delivery-state ' + (delivery.status || 'skipped');
-  if (delivery.status === 'sent') {
-    deliveryEl.textContent = delivery.attached ? 'sent to Gmail with the recording attached' : 'sent to Gmail with the recording link';
+  const driveOk = drive.status === 'uploaded';
+  const mailOk = delivery.status === 'sent';
+  deliveryEl.className = 'delivery-state ' + (mailOk && driveOk ? 'sent' : 'failed');
+  if (mailOk && driveOk) {
+    deliveryEl.textContent = 'sent to Gmail and uploaded to Google Drive';
+  } else if (!driveOk && delivery.status === 'sent') {
+    deliveryEl.textContent = 'sent by Gmail, but Google Drive upload needs attention';
   } else if (delivery.status === 'failed') {
-    deliveryEl.textContent = 'Gmail delivery failed - download is ready here';
+    deliveryEl.textContent = 'Gmail delivery failed - the server copy was removed';
   } else {
-    deliveryEl.textContent = 'Gmail delivery not configured - download is ready here';
+    deliveryEl.textContent = 'delivery needs attention - the server copy was removed';
   }
-  hint.innerHTML = 'full meeting recording · audio + video' +
-    (entry.s3_key ? ' · <span style="color:var(--green);font-weight:600">☁ saved to cloud</span>' : '');
-  setStatus('recording ready');
+  hint.textContent = 'Atom keeps only delivery history after the recording is sent.';
+  setStatus(mailOk && driveOk ? 'recording delivered' : 'delivery needs attention');
 }
 
 // ── LOGIN (Continue with Google) ──────────────────────────────
@@ -812,6 +823,47 @@ function setDashboardProfile(data) {
   document.getElementById('summaryCount').textContent = data.count ?? 0;
   document.getElementById('summaryTime').textContent = fmtTotal(data.total_duration || 0);
   document.getElementById('summarySince').textContent = fmtSince(data.created_at);
+}
+
+function initDriveTokenClient(cid) {
+  if (!(window.google && google.accounts && google.accounts.oauth2) || !cid) return;
+  driveTokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: cid,
+    scope: 'https://www.googleapis.com/auth/drive.file',
+    callback: resp => {
+      if (resp && resp.access_token) {
+        driveAccessToken = resp.access_token;
+        driveTokenExpiresAt = Date.now() + Math.max(30, Number(resp.expires_in || 3600) - 60) * 1000;
+        if (driveTokenRequest) driveTokenRequest.resolve(driveAccessToken);
+      } else if (driveTokenRequest) {
+        driveTokenRequest.resolve('');
+      }
+      driveTokenRequest = null;
+    },
+    error_callback: () => {
+      if (driveTokenRequest) driveTokenRequest.resolve('');
+      driveTokenRequest = null;
+    }
+  });
+}
+
+async function requestDriveToken() {
+  if (driveAccessToken && Date.now() < driveTokenExpiresAt) return Promise.resolve(driveAccessToken);
+  for (let i=0; i<25 && !(window.google && google.accounts && google.accounts.oauth2); i++) {
+    await new Promise(r => setTimeout(r, 200));
+  }
+  if (!driveTokenClient) initDriveTokenClient(appConfig.google_client_id);
+  if (!driveTokenClient) return Promise.resolve('');
+  return new Promise(resolve => {
+    driveTokenRequest = {resolve};
+    driveTokenClient.requestAccessToken({prompt: driveAccessToken ? '' : 'consent'});
+    setTimeout(() => {
+      if (driveTokenRequest) {
+        driveTokenRequest.resolve('');
+        driveTokenRequest = null;
+      }
+    }, 60000);
+  });
 }
 
 async function onGoogleCredential(resp) {
@@ -880,6 +932,7 @@ async function initApp() {
   const tryRender = () => {
     if (!(window.google && google.accounts && google.accounts.id)) { setTimeout(tryRender, 200); return; }
     google.accounts.id.initialize({ client_id: cid, callback: onGoogleCredential });
+    initDriveTokenClient(cid);
     const gtheme = document.documentElement.getAttribute('data-theme')==='light' ? 'outline' : 'filled_black';
     google.accounts.id.renderButton(document.getElementById('gsi'),
       { theme:gtheme, size:'large', text:'continue_with', shape:'pill', width:260 });
@@ -901,19 +954,18 @@ async function loadLibrary() {
     const d = await (await apiFetch('/recordings')).json();
     wrap.style.display='block';
     if (!d.items || !d.items.length) {
-      list.innerHTML = `<div class="lib-empty">no recordings yet — paste a meet link above to start</div>`;
+      list.innerHTML = `<div class="lib-empty">no delivered recordings yet - paste a meet link above to start</div>`;
       refreshDashboardProfile();
       return;
     }
     list.innerHTML = d.items.map(e => `
       <div class="lib-card" data-id="${e.id}">
-        <a class="lib-icon" href="${mediaUrl(e.url)}" target="_blank" title="play">▶</a>
+        <a class="lib-icon" href="${e.drive_delivery?.url || '#'}" target="_blank" title="open in Drive">✓</a>
         <div class="lib-info">
           <div class="lib-title">${esc(e.title)}</div>
-          <div class="lib-meta">${fmtDate(e.created_at)} · ${fmtDur(e.duration)}${e.s3_key?' · cloud':''}${e.email_delivery?.status==='sent'?' · gmail sent':''}</div>
+          <div class="lib-meta">${fmtDate(e.created_at)} · ${fmtDur(e.duration)}${deliveryMeta(e)}</div>
         </div>
-        <a class="lib-play" href="${mediaUrl(e.url)}" target="_blank">play</a>
-        <a class="lib-dl" href="${mediaUrl(e.url)}" download="${e.filename}">↓</a>
+        ${e.drive_delivery?.url ? `<a class="lib-play" href="${e.drive_delivery.url}" target="_blank">drive</a>` : ''}
         <button class="lib-del" onclick="deleteRec('${e.id}')" title="delete">✕</button>
       </div>`).join('');
     refreshDashboardProfile();
@@ -933,6 +985,16 @@ async function deleteRec(id) {
 
 function esc(s) {
   return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function deliveryMeta(e) {
+  const parts = [];
+  if (e.drive_delivery?.status === 'uploaded') parts.push('drive uploaded');
+  else if (e.drive_delivery?.status) parts.push('drive ' + e.drive_delivery.status);
+  if (e.email_delivery?.status === 'sent') parts.push('gmail sent');
+  else if (e.email_delivery?.status) parts.push('gmail ' + e.email_delivery.status);
+  parts.push('server copy deleted');
+  return parts.length ? ' · ' + parts.join(' · ') : '';
 }
 
 // ── PROFILE CARD ──────────────────────────────────────────────
@@ -977,18 +1039,17 @@ async function refreshCard() {
     // all sessions (recordings)
     const sEl=document.getElementById('cardSessions');
     if (!d.recordings || !d.recordings.length) {
-      sEl.innerHTML = `<div class="pcard-empty">no sessions yet</div>`;
+      sEl.innerHTML = `<div class="pcard-empty">no delivered sessions yet</div>`;
     } else {
       sEl.innerHTML = d.recordings.map(e => `
         <div class="sess" data-id="${e.id}">
           <span class="sess-dot done"></span>
           <div class="sess-info">
             <div class="sess-title">${esc(e.title)}</div>
-            <div class="sess-meta">${fmtDate(e.created_at)} · ${fmtDur(e.duration)}${e.s3_key?' · cloud':''}${e.email_delivery?.status==='sent'?' · gmail sent':''}</div>
+            <div class="sess-meta">${fmtDate(e.created_at)} · ${fmtDur(e.duration)}${deliveryMeta(e)}</div>
           </div>
           <div class="sess-act">
-            <a href="${mediaUrl(e.url)}" target="_blank">play</a>
-            <a href="${mediaUrl(e.url)}" download="${e.filename}">↓</a>
+            ${e.drive_delivery?.url ? `<a href="${e.drive_delivery.url}" target="_blank">drive</a>` : ''}
             <button class="del" onclick="deleteRec('${e.id}'); setTimeout(refreshCard,400)">✕</button>
           </div>
         </div>`).join('');
