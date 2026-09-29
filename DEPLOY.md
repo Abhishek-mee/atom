@@ -1,6 +1,6 @@
 # Deploy Atom
 
-Atom is a stateful web app. GitHub Pages can host the static web UI, but the Meet bot, database, Gmail delivery, and WebSocket session need the FastAPI backend running on a Docker-capable host.
+Atom is a stateful web app. GitHub Pages can host the static web UI, but the Meet bot, recording database, and WebSocket session need the FastAPI backend running on a Docker-capable host.
 
 Recommended production split with Railway:
 
@@ -11,12 +11,12 @@ Recommended production split with Railway:
 
 - A public HTTPS URL for the web app.
 - Google OAuth Web Client ID for end-user sign-in.
-- Gmail sender account with a Gmail app password.
 - Persistent disk for `/app/data`, because it stores:
-  - `atom.db`
+  - `atom.db`, including completed recording files
   - the bot Chrome profile
-  - local recordings when S3 is not enabled
-- Optional S3 bucket for recording storage.
+  - temporary capture files while a meeting is active
+
+The current Railway volume is 500 MB. Increase it before allowing many users or long recordings.
 
 ## Railway backend
 
@@ -70,28 +70,12 @@ REC_WIDTH=854
 REC_HEIGHT=480
 REC_FORMAT=webm
 BROWSER_CHANNEL=
-
-GMAIL_SMTP_USER=your-sender@gmail.com
-GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx
-GMAIL_FROM_EMAIL=your-sender@gmail.com
-EMAIL_ATTACH_LIMIT_MB=0
-```
-
-For S3-backed playback links, also set:
-
-```env
-S3_BUCKET=your-atom-recordings
-S3_REGION=us-east-1
-S3_PREFIX=recordings/
-AWS_ACCESS_KEY_ID=...
-AWS_SECRET_ACCESS_KEY=...
-S3_PRESIGN_DAYS=7
-S3_KEEP_LOCAL=false
+MAX_RECORDING_DB_MB=200
 ```
 
 ## Google OAuth setup for public users
 
-Atom cannot automatically connect every user's Google Drive while the Google OAuth app is in Testing mode. Testing mode only allows developer-approved test users. For public Gmail users, move the OAuth app through Google's production and verification flow.
+Testing mode only allows developer-approved test users. For public Google accounts, move the OAuth app through Google's production and verification flow.
 
 In Google Cloud Console, configure the OAuth consent screen:
 
@@ -111,17 +95,15 @@ Terms of service: https://atom.abhishek-meena.in/terms
 openid
 email
 profile
-https://www.googleapis.com/auth/drive.file
 ```
 
 5. Add `abhishek-meena.in` as an authorized domain.
 6. Publish the app to Production.
 7. If Google marks the scopes as sensitive or requests verification, submit the verification form and include a short demo video showing:
    - Google sign-in.
-   - User granting Drive permission.
    - User pasting a Google Meet link.
-   - Atom uploading the finished recording to that user's Drive.
-   - Atom deleting the temporary server copy.
+   - Atom storing the finished recording in that user's private library.
+   - The user playing and deleting their recording.
 
 Create an OAuth Web Client and add your deployed frontend origins:
 
@@ -132,7 +114,7 @@ https://abhishek-mee.github.io
 
 Use the resulting client ID as `GOOGLE_CLIENT_ID`.
 
-Until the OAuth app is published and verification is accepted, add each Gmail address under Test users or Google will show `Error 403: access_denied`.
+Until the OAuth app is published and verification is accepted, add each Google account under Test users or Google will show `Error 403: access_denied`.
 
 ## GitHub Pages frontend
 
@@ -185,15 +167,9 @@ Expected:
 window.ATOM_API_BASE = "https://api.abhishek-meena.in";
 ```
 
-## Gmail setup
+## Recording capacity
 
-For the sending Gmail account:
-
-1. Enable 2-Step Verification.
-2. Create an App Password.
-3. Put that value in `GMAIL_APP_PASSWORD`.
-
-Atom sends the finished recording to the signed-in user's Google email. If the file is larger than `EMAIL_ATTACH_LIMIT_MB`, the email contains the playback link instead of attaching the file.
+Completed files are stored as BLOBs in `/app/data/atom.db`. `MAX_RECORDING_DB_MB` limits one recording, but the Railway volume must also have room for the database plus the temporary file created while recording. Monitor volume usage and increase the volume before public use.
 
 ## Bot Google profile
 

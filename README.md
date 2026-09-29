@@ -1,17 +1,17 @@
 # Atom
 
-Atom is a Google Meet recording app that demonstrates the core loop first: provide a Meet link or invite, let the bot join by itself, record audio + video, and send the finished recording over Gmail.
+Atom is a Google Meet recording app that demonstrates the core loop first: provide a Meet link or invite, let the bot join by itself, record audio + video, and store the finished recording in the user's private Atom library.
 
 ## Current progress
 
 - Google sign-in for end users is working.
-- Users, sessions, recordings, and Gmail delivery status are stored in SQLite.
+- Users, sessions, recording metadata, and recording files are stored in SQLite.
 - Meet join flow is working through Playwright.
 - Audio + video recording is working and saved as MP4 after the meeting ends.
-- Gmail delivery is wired through server-side Gmail SMTP settings.
+- Authenticated playback and download are available from the recording library.
 - Auto-leave when the meeting is alone is implemented.
 - Per-user profile and recording library are implemented.
-- Optional S3 storage is supported from server-side env vars.
+- Recording deletion is scoped to the signed-in owner.
 - Smoke tests cover the main API routes.
 
 ## What the app does today
@@ -20,8 +20,8 @@ Atom is a Google Meet recording app that demonstrates the core loop first: provi
 2. User pastes a Google Meet link.
 3. Atom joins the meeting and records it.
 4. When the meeting ends, the recording is finalized.
-5. The finished file is sent to the user's Gmail address.
-6. The finished file also appears in the user library.
+5. The finished file is stored in SQLite on Atom's persistent Railway volume.
+6. The recording appears in the user's private library for playback or download.
 
 ## Project layout
 
@@ -32,8 +32,7 @@ Atom is a Google Meet recording app that demonstrates the core loop first: provi
 - `meeting/meet/auth.py` - Persistent Chrome profile sign-in used by the bot.
 - `core/users.py` - Google user identities and sessions.
 - `core/database.py` - SQLite schema and legacy JSON import.
-- `core/storage.py` - Database-backed recording library and S3 upload.
-- `core/mailer.py` - Gmail SMTP delivery for finished recordings.
+- `core/storage.py` - Database-backed private recording library.
 - `scripts/smoke_test.py` - Basic health checks.
 
 ## Local run
@@ -62,20 +61,8 @@ RECORDINGS_DIR=api/static/recordings
 DEBUG_DIR=api/static/debug
 RECORD_MEETING=true
 AGENT_NAME=Atom
-GMAIL_SMTP_USER=your-sender@gmail.com
-GMAIL_APP_PASSWORD=your-gmail-app-password
-GMAIL_FROM_EMAIL=your-sender@gmail.com
+MAX_RECORDING_DB_MB=200
 APP_BASE_URL=http://127.0.0.1:8000
-```
-
-Optional S3 settings for cloud storage:
-
-```env
-S3_BUCKET=...
-S3_REGION=us-east-1
-S3_PREFIX=recordings/
-AWS_ACCESS_KEY_ID=...
-AWS_SECRET_ACCESS_KEY=...
 ```
 
 ## Smoke test
@@ -94,8 +81,8 @@ Minimum production requirements:
 - Docker backend URL, for example `https://api.abhishek-meena.in`.
 - `GOOGLE_CLIENT_ID` with that URL added to Google OAuth Authorized JavaScript origins.
 - `ADMIN_TOKEN` to protect bot-profile setup endpoints.
-- Persistent volume mounted at `/app/data` for `atom.db`, recordings, debug captures, and the bot Chrome profile.
-- Gmail app password configured through `GMAIL_SMTP_USER` and `GMAIL_APP_PASSWORD`.
+- Persistent volume mounted at `/app/data` for `atom.db`, temporary capture files, debug captures, and the bot Chrome profile.
+- Enough persistent-volume capacity for the recording BLOBs stored in `atom.db`.
 - Google OAuth app published to Production and verified if Google requests it; Testing mode only works for listed test users.
 
 Useful production endpoints:
@@ -111,4 +98,4 @@ GitHub Pages is supported for the static frontend through `.github/workflows/pag
 
 - Runtime files such as session state, user data, recordings, and browser profile data are ignored by git.
 - If old `config/users.json`, `config/sessions.json`, or `config/recordings.json` files exist, Atom imports them into SQLite on startup.
-- The first demo focuses on invite -> join -> record -> send. Summaries and transcripts can be layered on later.
+- The first demo focuses on invite -> join -> record -> store. Summaries and transcripts can be layered on later.

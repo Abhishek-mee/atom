@@ -1,12 +1,13 @@
 """
 Storage layer for Atom.
 
-Completed recordings are delivered to the user by email and Google Drive. Atom
-keeps only session metadata and delivery status after the final file is sent.
+Completed recordings are stored in SQLite and scoped to their signed-in owner.
+Temporary capture files are removed after the database transaction completes.
 """
 from __future__ import annotations
 
 import logging
+import mimetypes
 import os
 import subprocess
 import time
@@ -19,46 +20,12 @@ logger = logging.getLogger(__name__)
 RECORDINGS_DIR = Path(os.getenv("RECORDINGS_DIR", "api/static/recordings"))
 
 
-# ── Operator S3 config (server env) ───────────────────────────────────────────
-def _s3_cfg() -> dict:
-    return {
-        "bucket":     os.getenv("S3_BUCKET", "").strip(),
-        "region":     os.getenv("S3_REGION", "us-east-1").strip(),
-        "prefix":     os.getenv("S3_PREFIX", "recordings/").strip(),
-        "access_key": os.getenv("AWS_ACCESS_KEY_ID", "").strip(),
-        "secret_key": os.getenv("AWS_SECRET_ACCESS_KEY", "").strip(),
-        "presign_days": int(os.getenv("S3_PRESIGN_DAYS", "7")),
-        "keep_local": os.getenv("S3_KEEP_LOCAL", "false").lower() in ("1", "true", "yes"),
-    }
-
-
-def s3_enabled() -> bool:
-    c = _s3_cfg()
-    return bool(c["bucket"] and c["access_key"] and c["secret_key"])
-
-
-def _client():
-    import boto3
-    c = _s3_cfg()
-    return boto3.client(
-        "s3", region_name=c["region"],
-        aws_access_key_id=c["access_key"], aws_secret_access_key=c["secret_key"],
-    )
-
-
-def _presign(key: str) -> str | None:
-    if not s3_enabled():
-        return None
-    c = _s3_cfg()
+def max_recording_bytes() -> int:
+    raw = os.getenv("MAX_RECORDING_DB_MB", "200").strip()
     try:
-        return _client().generate_presigned_url(
-            "get_object",
-            Params={"Bucket": c["bucket"], "Key": key},
-            ExpiresIn=c["presign_days"] * 86400,
-        )
-    except Exception as e:
-        logger.warning("presign failed: %s", e)
-        return None
+        return max(1, int(raw)) * 1024 * 1024
+    except ValueError:
+        return 200 * 1024 * 1024
 
 
 def _probe_duration(path: Path) -> int:
@@ -74,9 +41,25 @@ def _probe_duration(path: Path) -> int:
 
 
 async def add_recording(local_path: Path, meet_code: str = "", user_sub: str = "") -> dict:
-    """Index a completed session and return the metadata entry."""
+    """Store a completed recording in SQLite and return its metadata."""
+    import asyncio
+
+    return await asyncio.to_thread(_add_recording_sync, local_path, meet_code, user_sub)
+
+
+def _add_recording_sync(local_path: Path, meet_code: str, user_sub: str) -> dict:
     size = local_path.stat().st_size if local_path.exists() else 0
+    if not size:
+        raise ValueError("The completed recording file is empty.")
+    limit = max_recording_bytes()
+    if size > limit:
+        raise ValueError(
+            f"Recording is too large for Atom's database ({size // (1024 * 1024)} MB). "
+            f"The current limit is {limit // (1024 * 1024)} MB."
+        )
     duration = _probe_duration(local_path) if local_path.exists() else 0
+    content_type = mimetypes.guess_type(local_path.name)[0] or "application/octet-stream"
+    recording_data = local_path.read_bytes()
     entry = {
         "id": local_path.stem,
         "user": user_sub,                 # owner (Google sub)
@@ -86,7 +69,8 @@ async def add_recording(local_path: Path, meet_code: str = "", user_sub: str = "
         "duration": duration,
         "size": size,
         "filename": local_path.name,
-        "s3_key": None,
+        "content_type": content_type,
+        "stored": True,
         "summary": build_meeting_summary(meet_code=meet_code, duration=duration),
     }
 
@@ -94,9 +78,10 @@ async def add_recording(local_path: Path, meet_code: str = "", user_sub: str = "
         conn.execute(
             """
             INSERT INTO recordings (
-                id, user_sub, title, meet_code, created_at, duration, size, filename, s3_key, summary
+                id, user_sub, title, meet_code, created_at, duration, size, filename,
+                summary, content_type, recording_data
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 entry["id"],
@@ -107,8 +92,9 @@ async def add_recording(local_path: Path, meet_code: str = "", user_sub: str = "
                 entry["duration"],
                 entry["size"],
                 entry["filename"],
-                entry["s3_key"],
                 entry["summary"],
+                entry["content_type"],
+                recording_data,
             ),
         )
     return _decorate(entry)
@@ -119,20 +105,19 @@ def build_meeting_summary(*, meet_code: str, duration: int) -> str:
     title = (meet_code or "meeting").replace("-", " ").strip() or "meeting"
     return (
         f"Atom recorded the Google Meet session '{title}' for about {minutes} minute"
-        f"{'' if minutes == 1 else 's'}. The recording was prepared for delivery to the user's Gmail and Google Drive. "
+        f"{'' if minutes == 1 else 's'}. The recording is stored privately in the user's Atom library. "
         "Content-level summaries require transcript capture and are not generated from private account screens."
     )
 
 
 def _decorate(e: dict) -> dict:
-    """Add the user-owned Drive URL when available."""
-    drive = e.get("drive_delivery") or {}
-    url = drive.get("url")
+    """Add the authenticated media URL without exposing recording bytes."""
+    url = f"/recordings/{e['id']}/media" if e.get("stored") else None
     return {**e, "url": url}
 
 
 def purge_local_recording_files() -> int:
-    """Delete leftover local media files so Atom is not a recording host."""
+    """Delete unfinished capture files; completed media lives in SQLite."""
     count = 0
     RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
     for path in RECORDINGS_DIR.glob("*"):
@@ -149,9 +134,14 @@ def purge_local_recording_files() -> int:
 
 
 def list_recordings(user_sub: str = "") -> list[dict]:
-    """Return this user's delivered recording sessions."""
+    """Return recording metadata without loading BLOB data into memory."""
     out = []
-    query = "SELECT * FROM recordings"
+    query = """
+        SELECT id, user_sub, title, meet_code, created_at, duration, size,
+               filename, summary, content_type,
+               recording_data IS NOT NULL AS stored
+        FROM recordings
+    """
     params: tuple = ()
     if user_sub:
         query += " WHERE user_sub = ?"
@@ -163,52 +153,50 @@ def list_recordings(user_sub: str = "") -> list[dict]:
     return out
 
 
-def update_recording_delivery(rec_id: str, user_sub: str, delivery: dict) -> None:
-    """Persist email delivery status for a user's recording."""
+def get_recording_media_info(rec_id: str, user_sub: str) -> dict | None:
+    """Return media metadata without loading the recording BLOB."""
     with connect() as conn:
-        conn.execute(
+        row = conn.execute(
             """
-            UPDATE recordings
-            SET email_delivery_status = ?,
-                email_delivery_message = ?,
-                email_delivery_attached = ?,
-                email_delivery_updated_at = ?
-            WHERE id = ? AND user_sub = ?
+            SELECT filename, content_type, length(recording_data) AS total
+            FROM recordings
+            WHERE id = ? AND user_sub = ? AND recording_data IS NOT NULL
             """,
-            (
-                delivery.get("status", "unknown"),
-                delivery.get("message", ""),
-                1 if delivery.get("attached") else 0,
-                int(time.time()),
-                rec_id,
-                user_sub,
-            ),
-        )
+            (rec_id, user_sub),
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "filename": row["filename"],
+        "content_type": row["content_type"] or "application/octet-stream",
+        "total": int(row["total"]),
+    }
 
 
-def update_recording_drive_delivery(rec_id: str, user_sub: str, delivery: dict) -> None:
-    """Persist Google Drive delivery status for a user's recording."""
+def get_recording_media(
+    rec_id: str,
+    user_sub: str,
+    *,
+    start: int = 0,
+    length: int | None = None,
+) -> dict | None:
+    """Return an owner-scoped BLOB slice for playback or download."""
+    info = get_recording_media_info(rec_id, user_sub)
+    if not info:
+        return None
+    length = info["total"] - start if length is None else length
     with connect() as conn:
-        conn.execute(
+        row = conn.execute(
             """
-            UPDATE recordings
-            SET drive_delivery_status = ?,
-                drive_delivery_message = ?,
-                drive_file_id = ?,
-                drive_url = ?,
-                drive_delivery_updated_at = ?
-            WHERE id = ? AND user_sub = ?
+            SELECT substr(recording_data, ?, ?) AS data
+            FROM recordings
+            WHERE id = ? AND user_sub = ? AND recording_data IS NOT NULL
             """,
-            (
-                delivery.get("status", "unknown"),
-                delivery.get("message", ""),
-                delivery.get("file_id"),
-                delivery.get("url"),
-                int(time.time()),
-                rec_id,
-                user_sub,
-            ),
-        )
+            (start + 1, length, rec_id, user_sub),
+        ).fetchone()
+    if not row:
+        return None
+    return {**info, "data": bytes(row["data"])}
 
 
 def cleanup_recording_files(local_path: Path | None) -> None:
@@ -228,10 +216,15 @@ def cleanup_recording_files(local_path: Path | None) -> None:
 
 
 def delete_recording(rec_id: str, user_sub: str) -> bool:
-    """Delete a recording (index + local file + S3 object), scoped to its owner."""
+    """Delete a database recording, scoped to its owner."""
     with connect() as conn:
         row = conn.execute(
-            "SELECT * FROM recordings WHERE id = ? AND user_sub = ?",
+            """
+            SELECT id, user_sub, title, meet_code, created_at, duration, size,
+                   filename, summary, content_type,
+                   recording_data IS NOT NULL AS stored
+            FROM recordings WHERE id = ? AND user_sub = ?
+            """,
             (rec_id, user_sub),
         ).fetchone()
     target = _row_to_entry(row) if row else None
@@ -243,13 +236,6 @@ def delete_recording(rec_id: str, user_sub: str) -> bool:
         (RECORDINGS_DIR / target["filename"]).unlink(missing_ok=True)
     except Exception:
         pass
-    # S3 object
-    if target.get("s3_key") and s3_enabled():
-        try:
-            _client().delete_object(Bucket=_s3_cfg()["bucket"], Key=target["s3_key"])
-        except Exception as e:
-            logger.warning("S3 delete failed: %s", e)
-
     with connect() as conn:
         conn.execute("DELETE FROM recordings WHERE id = ? AND user_sub = ?", (rec_id, user_sub))
     logger.info("Deleted recording %s", rec_id)
@@ -266,22 +252,10 @@ def _row_to_entry(row) -> dict:
         "duration": row["duration"],
         "size": row["size"],
         "filename": row["filename"],
-        "s3_key": row["s3_key"],
         "summary": row["summary"] if "summary" in row.keys() else "",
+        "content_type": row["content_type"] if "content_type" in row.keys() else None,
+        "stored": bool(row["stored"]) if "stored" in row.keys() else (
+            "recording_data" in row.keys() and row["recording_data"] is not None
+        ),
     }
-    if row["email_delivery_status"]:
-        entry["email_delivery"] = {
-            "status": row["email_delivery_status"],
-            "message": row["email_delivery_message"] or "",
-            "attached": bool(row["email_delivery_attached"]),
-            "updated_at": row["email_delivery_updated_at"],
-        }
-    if "drive_delivery_status" in row.keys() and row["drive_delivery_status"]:
-        entry["drive_delivery"] = {
-            "status": row["drive_delivery_status"],
-            "message": row["drive_delivery_message"] or "",
-            "file_id": row["drive_file_id"],
-            "url": row["drive_url"],
-            "updated_at": row["drive_delivery_updated_at"],
-        }
     return entry

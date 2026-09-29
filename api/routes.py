@@ -1,7 +1,7 @@
 """
 FastAPI app - serves the single-page UI and handles WebSocket sessions.
-Core flow: receive a Meet invite, join, record audio+video, send it to Gmail/Drive,
-and remove Atom's temporary server copy.
+Core flow: receive a Meet invite, join, record audio+video, and store the finished
+recording in the signed-in user's private database library.
 """
 from __future__ import annotations
 
@@ -15,22 +15,20 @@ from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from config.settings import settings
 from core.database import DB_PATH, init_db
-from core.drive import upload_recording_to_drive
-from core.mailer import gmail_enabled, send_recording_email
 from core.storage import (
     add_recording,
     cleanup_recording_files,
     delete_recording,
+    get_recording_media,
+    get_recording_media_info,
     list_recordings,
+    max_recording_bytes,
     purge_local_recording_files,
-    s3_enabled,
-    update_recording_delivery,
-    update_recording_drive_delivery,
 )
 from core.users import (
     google_client_id, verify_google_credential, get_or_create_user,
@@ -70,7 +68,6 @@ STATIC_DIR = Path(__file__).parent / "static"
 STATIC_DIR.mkdir(exist_ok=True)
 RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-app.mount("/recordings", StaticFiles(directory=str(RECORDINGS_DIR)), name="recordings")
 
 # Auth flow state
 _auth_state: dict = {"running": False, "done": False, "error": None}
@@ -136,8 +133,8 @@ def _snapshot_health() -> dict:
         "auth_ready": True,
         "bot_google_profile": has_auth(),
         "bot_guest_fallback": True,
-        "s3_enabled": s3_enabled(),
-        "gmail_enabled": gmail_enabled(),
+        "recording_storage": "database",
+        "max_recording_db_mb": max_recording_bytes() // (1024 * 1024),
         "google_auth_enabled": bool(google_client_id()),
         "database": str(DB_PATH),
         "admin_secured": bool(settings.admin_token),
@@ -150,12 +147,12 @@ def _snapshot_readiness() -> dict:
         "database": DB_PATH.exists(),
         "recordings_dir": RECORDINGS_DIR.exists(),
         "google_client_id": bool(google_client_id()),
-        "gmail": gmail_enabled(),
+        "database_recordings": True,
         "bot_google_profile": has_auth(),
         "bot_guest_fallback": True,
     }
     return {
-        "ok": checks["database"] and checks["recordings_dir"] and checks["google_client_id"] and checks["gmail"],
+        "ok": checks["database"] and checks["recordings_dir"] and checks["google_client_id"],
         "checks": checks,
         "health": _snapshot_health(),
     }
@@ -242,7 +239,8 @@ async def auth_start(request: Request) -> JSONResponse:
 async def app_config() -> JSONResponse:
     return JSONResponse({
         "google_client_id": google_client_id(),
-        "gmail_enabled": gmail_enabled(),
+        "recording_storage": "database",
+        "max_recording_db_mb": max_recording_bytes() // (1024 * 1024),
         "auth_ready": True,
         "bot_google_profile": has_auth(),
         "bot_guest_fallback": True,
@@ -294,16 +292,15 @@ async def auth_logout(request: Request) -> JSONResponse:
     return resp
 
 
-# ── Recording delivery history (per user) ─────────────────────────────────────
+# ── Private recording library (per user) ──────────────────────────────────────
 @app.get("/recordings")
 async def get_recordings(request: Request) -> JSONResponse:
     user = user_for_session(request.cookies.get(SESSION_COOKIE))
     if not user:
-        return JSONResponse({"items": [], "cloud": s3_enabled(), "gmail": gmail_enabled()})
+        return JSONResponse({"items": [], "storage": "database"})
     return JSONResponse({
         "items": list_recordings(user["sub"]),
-        "cloud": s3_enabled(),
-        "gmail": gmail_enabled(),
+        "storage": "database",
     })
 
 
@@ -348,6 +345,67 @@ async def del_recording(rec_id: str, request: Request) -> JSONResponse:
         return JSONResponse({"ok": False}, status_code=401)
     ok = delete_recording(rec_id, user["sub"])
     return JSONResponse({"ok": ok})
+
+
+@app.get("/recordings/{rec_id}/media")
+async def recording_media(
+    rec_id: str,
+    request: Request,
+    download: bool = False,
+) -> Response:
+    user = user_for_session(request.cookies.get(SESSION_COOKIE))
+    if not user:
+        return JSONResponse({"ok": False, "message": "Not signed in"}, status_code=401)
+    info = get_recording_media_info(rec_id, user["sub"])
+    if not info:
+        return JSONResponse({"ok": False, "message": "Recording not found"}, status_code=404)
+
+    total = info["total"]
+    start = 0
+    end = total - 1
+    status_code = 200
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(total),
+        "Cache-Control": "private, no-store",
+        "Content-Disposition": (
+            f"{'attachment' if download else 'inline'}; "
+            f"filename=\"{info['filename'].replace(chr(34), '')}\""
+        ),
+    }
+    range_header = request.headers.get("range", "")
+    if range_header.startswith("bytes="):
+        try:
+            start_text, end_text = range_header[6:].split("-", 1)
+            if start_text:
+                start = int(start_text)
+                end = int(end_text) if end_text else total - 1
+            else:
+                suffix = int(end_text)
+                start = max(0, total - suffix)
+                end = total - 1
+            if start < 0 or end < start or start >= total:
+                raise ValueError
+            end = min(end, total - 1)
+        except (TypeError, ValueError):
+            return Response(status_code=416, headers={"Content-Range": f"bytes */{total}"})
+        status_code = 206
+        headers["Content-Range"] = f"bytes {start}-{end}/{total}"
+        headers["Content-Length"] = str(end - start + 1)
+    media = get_recording_media(
+        rec_id,
+        user["sub"],
+        start=start,
+        length=end - start + 1,
+    )
+    if not media:
+        return JSONResponse({"ok": False, "message": "Recording not found"}, status_code=404)
+    return Response(
+        content=media["data"],
+        status_code=status_code,
+        media_type=info["content_type"],
+        headers=headers,
+    )
 
 
 # ── UI ────────────────────────────────────────────────────────────────────────
@@ -406,18 +464,10 @@ async def meeting_ws(ws: WebSocket) -> None:
                     await send({"type": "error", "message": "Please sign in first."})
                     continue
                 raw_url = msg.get("url", "").strip()
-                drive_token = msg.get("drive_token", "").strip()
                 try:
                     url, meet_code = normalize_meet_url(raw_url)
                 except ValueError as exc:
                     await send({"type": "error", "code": "invalid_meet_url", "message": str(exc)})
-                    continue
-                if not drive_token:
-                    await send({
-                        "type": "error",
-                        "code": "drive_permission_required",
-                        "message": "Google Drive permission is required before recording.",
-                    })
                     continue
                 if bot_task and not bot_task.done():
                     await send({"type": "error", "code": "meeting_already_running", "message": "Already in a meeting."})
@@ -447,35 +497,18 @@ async def meeting_ws(ws: WebSocket) -> None:
                         await bot.join()
                         if bot.recording_path:
                             local = RECORDINGS_DIR / Path(bot.recording_path).name
-                            entry = await add_recording(
-                                local, meet_code=meet_code, user_sub=user["sub"]
-                            )
                             try:
-                                await send({"type": "status", "message": "Uploading recording to your Google Drive..."})
-                                drive_delivery = await upload_recording_to_drive(
-                                    access_token=drive_token,
-                                    local_path=local,
-                                    entry=entry,
+                                await send({
+                                    "type": "status",
+                                    "message": "Saving recording to your private Atom library...",
+                                })
+                                entry = await add_recording(
+                                    local, meet_code=meet_code, user_sub=user["sub"]
                                 )
-                                update_recording_drive_delivery(entry["id"], user["sub"], drive_delivery)
-                                entry["drive_delivery"] = drive_delivery
-
-                                await send({"type": "status", "message": "Sending recording email..."})
-                                delivery_entry = {**entry, "drive_url": drive_delivery.get("url")}
-                                delivery = await send_recording_email(
-                                    entry=delivery_entry,
-                                    recipient=user["email"],
-                                    local_path=local,
-                                )
-                                update_recording_delivery(entry["id"], user["sub"], delivery)
-                                entry["email_delivery"] = delivery
                             finally:
                                 cleanup_recording_files(local)
                             await send({"type": "recording", "entry": entry})
-                            if entry.get("drive_delivery", {}).get("status") == "uploaded" and entry.get("email_delivery", {}).get("status") == "sent":
-                                await send({"type": "status", "message": "Recording sent to Gmail and Google Drive"})
-                            else:
-                                await send({"type": "status", "message": "Recording finished - delivery needs attention"})
+                            await send({"type": "status", "message": "Recording saved to your Atom library"})
                         else:
                             await send({"type": "status", "message": "Meeting ended (no recording captured)"})
                     except Exception as e:
@@ -493,6 +526,6 @@ async def meeting_ws(ws: WebSocket) -> None:
 
     except WebSocketDisconnect:
         # Do NOT cancel the recording. The socket may drop or reconnect, but the
-        # bot keeps recording and finalizes delivery. Completed media is uploaded
-        # to the user's Google Drive and the local server copy is removed.
+        # The bot keeps recording and stores the completed media in the user's
+        # database library even if their browser connection drops.
         logger.info("WebSocket disconnected; recording continues in background")

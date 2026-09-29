@@ -60,6 +60,8 @@ def init_db() -> None:
                 drive_url TEXT,
                 drive_delivery_updated_at INTEGER,
                 summary TEXT,
+                content_type TEXT,
+                recording_data BLOB,
                 FOREIGN KEY (user_sub) REFERENCES users(sub) ON DELETE CASCADE
             );
 
@@ -75,6 +77,8 @@ def init_db() -> None:
             "drive_url": "TEXT",
             "drive_delivery_updated_at": "INTEGER",
             "summary": "TEXT",
+            "content_type": "TEXT",
+            "recording_data": "BLOB",
         })
         _ensure_columns(conn, "users", {
             "display_name": "TEXT",

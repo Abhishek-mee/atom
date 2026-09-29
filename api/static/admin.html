@@ -33,7 +33,7 @@ pre { overflow:auto; background:#151311; color:#F5F3EE; border-radius:8px; paddi
 <body>
 <main>
   <h1>atom admin</h1>
-  <p>Use this page after deployment to verify user auth, database, Gmail delivery, and the optional bot Google profile used for restricted meetings.</p>
+  <p>Use this page after deployment to verify user auth, database recording storage, and the optional bot Google profile used for restricted meetings.</p>
   <div class="notice" id="notice">Loading admin status...</div>
 
   <div class="token">
@@ -95,7 +95,7 @@ async function refresh() {
   cards.innerHTML = [
     yn('database', ready.checks?.database),
     yn('google user auth', ready.checks?.google_client_id),
-    yn('gmail delivery', ready.checks?.gmail),
+    yn('database recordings', ready.checks?.database_recordings),
     yn('bot google profile', ready.checks?.bot_google_profile || ready.checks?.bot_guest_fallback),
   ].join('');
   const status = await call('/auth/status');

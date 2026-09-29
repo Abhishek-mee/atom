@@ -6,7 +6,7 @@ Checks the core product path quickly:
 - app homepage loads
 - health endpoint is live
 - config/auth endpoints return sane JSON
-- invite -> join -> record -> send copy is present
+- invite -> join -> record -> store copy is present
 
 Run it after starting the local server:
   python scripts/smoke_test.py
@@ -82,7 +82,7 @@ def main() -> int:
               failures.append("home did not return 200")
           if "atom" not in body.lower():
               failures.append("home page missing atom copy")
-          if "join, record, send" not in body.lower():
+          if "join, record, store" not in body.lower():
               failures.append("home page missing core demo flow")
           parser = TitleParser()
           parser.feed(body)
@@ -95,7 +95,7 @@ def main() -> int:
                 health = json.loads(body)
                 for key in (
                     "ok", "app", "recordings", "users", "sessions", "active_sessions",
-                    "auth_ready", "s3_enabled", "gmail_enabled", "google_auth_enabled",
+                    "auth_ready", "recording_storage", "max_recording_db_mb", "google_auth_enabled",
                     "database", "admin_secured",
                 ):
                     if key not in health:
