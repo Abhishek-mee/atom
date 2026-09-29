@@ -92,3 +92,30 @@ def test_media_route_requires_owner_and_supports_ranges(monkeypatch, tmp_path):
         assert response.status_code == 206
         assert response.content == b"45678"
         assert response.headers["content-range"] == "bytes 4-8/16"
+
+
+def test_admin_can_list_and_delete_recordings(monkeypatch, tmp_path):
+    storage = _load_storage(monkeypatch, tmp_path)
+    capture = tmp_path / "captures" / "admin-delete.webm"
+    capture.parent.mkdir(parents=True)
+    capture.write_bytes(b"admin-owned-recording")
+    asyncio.run(storage.add_recording(capture, "abc-defg-hij", "owner-1"))
+
+    import api.routes as routes
+
+    importlib.reload(routes)
+    routes.settings.admin_token = "test-admin-token"
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(routes.app) as client:
+        assert client.get("/admin/recordings").status_code == 401
+        headers = {"X-Atom-Admin-Token": "test-admin-token"}
+        listing = client.get("/admin/recordings", headers=headers)
+        assert listing.status_code == 200
+        assert listing.json()["items"][0]["owner_email"] == "one@example.com"
+
+        deleted = client.delete("/admin/recordings/admin-delete", headers=headers)
+        assert deleted.status_code == 200
+        assert deleted.json()["ok"] is True
+        assert storage.get_recording_media("admin-delete", "owner-1") is None

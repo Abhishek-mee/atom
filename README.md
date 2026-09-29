@@ -90,6 +90,7 @@ Useful production endpoints:
 - `/health` - liveness.
 - `/ready` - deployment readiness checks.
 - `/admin` - bot profile and service readiness panel.
+- `/admin` also provides bot runtime diagnostics and administrator recording deletion.
 - `/privacy` and `/terms` - public links for Google OAuth consent review.
 
 GitHub Pages is supported for the static frontend through `.github/workflows/pages.yml`; the backend is configured for Railway through `Dockerfile` and `railway.json`.

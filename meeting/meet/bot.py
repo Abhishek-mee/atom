@@ -15,6 +15,7 @@ import asyncio
 import logging
 import os
 import re
+import shutil
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -54,6 +55,53 @@ def guest_fallback_enabled() -> bool:
     return os.getenv("BOT_GUEST_FALLBACK", "true").lower() in ("1", "true", "yes")
 
 
+async def runtime_diagnostics() -> dict:
+    """Check the server-side tools required by the meeting bot."""
+    checks = {
+        "playwright": PLAYWRIGHT_AVAILABLE,
+        "chromium": False,
+        "ffmpeg": bool(shutil.which("ffmpeg")),
+        "ffprobe": bool(shutil.which("ffprobe")),
+        "recording_enabled": record_enabled(),
+        "recordings_dir_writable": False,
+    }
+    errors: list[str] = []
+    if not checks["ffmpeg"]:
+        errors.append("ffmpeg executable was not found")
+    if not checks["ffprobe"]:
+        errors.append("ffprobe executable was not found")
+    if not checks["recording_enabled"]:
+        errors.append("RECORD_MEETING is disabled")
+    try:
+        RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+        probe = RECORDINGS_DIR / ".atom-write-check"
+        probe.write_bytes(b"ok")
+        probe.unlink(missing_ok=True)
+        checks["recordings_dir_writable"] = True
+    except Exception as exc:
+        errors.append(f"recordings directory: {exc}")
+
+    if PLAYWRIGHT_AVAILABLE:
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(
+                    headless=True,
+                    args=CHROME_ARGS + ["--no-sandbox", "--disable-dev-shm-usage"],
+                )
+                page = await browser.new_page()
+                await page.set_content("<title>Atom bot check</title><main>ready</main>")
+                checks["chromium"] = await page.title() == "Atom bot check"
+                await browser.close()
+        except Exception as exc:
+            errors.append(f"chromium: {exc}")
+
+    return {
+        "ok": all(checks.values()),
+        "checks": checks,
+        "errors": errors,
+    }
+
+
 def audio_file_for(session_id: str) -> Path:
     return RECORDINGS_DIR / f"{session_id}_audio.webm"
 
@@ -61,14 +109,20 @@ def audio_file_for(session_id: str) -> Path:
 # ── Auth pool ───────────────────────────────────────────────────────────────
 import itertools as _itertools
 _slot_cycle = None
+_slot_signature: tuple[int, ...] = ()
 
 def _pick_auth_slot() -> int | None:
     """Pick next available signed-in Google auth slot, round-robin. None if none."""
-    global _slot_cycle
+    global _slot_cycle, _slot_signature
     slots = list_profile_slots()
     if not slots:
+        _slot_cycle = None
+        _slot_signature = ()
         return None
-    _slot_cycle = _itertools.cycle(slots)
+    signature = tuple(slots)
+    if _slot_cycle is None or signature != _slot_signature:
+        _slot_cycle = _itertools.cycle(slots)
+        _slot_signature = signature
     return next(_slot_cycle)
 
 
@@ -368,7 +422,11 @@ class MeetBot:
             await self._dismiss_popups()
             await self._mute_av()
             await asyncio.sleep(0.5)
-            await self._click_join()
+            if not await self._click_join():
+                raise RuntimeError(
+                    "Atom could not find the Google Meet join control. "
+                    "Google may have changed the pre-join page or blocked this browser session."
+                )
             await asyncio.sleep(2)
             await self._screenshot("02_after_join_click")
 
@@ -391,19 +449,21 @@ class MeetBot:
 
             start = time.time()
             alone_t: float | None = None
+            saw_multiple_participants = False
 
             while self._running:
                 count = await self._pax_count()
                 await self.on_count(count)
 
-                if count <= 1:
+                if count > 1:
+                    saw_multiple_participants = True
+                    alone_t = None
+                elif saw_multiple_participants:
                     if alone_t is None:
                         alone_t = time.time()
                     elif time.time() - alone_t >= ALONE_TIMEOUT:
                         await self._status("Everyone left — wrapping up…")
                         break
-                else:
-                    alone_t = None
 
                 if time.time() - start > MAX_DURATION:
                     await self._status("Max duration reached — leaving…")
@@ -569,7 +629,7 @@ class MeetBot:
             except Exception:
                 pass
 
-    async def _click_join(self) -> None:
+    async def _click_join(self) -> bool:
         for attempt in range(8):
             for label in ["Join now", "Ask to join", "Join"]:
                 try:
@@ -577,7 +637,7 @@ class MeetBot:
                     if await btn.is_visible(timeout=2_000):
                         await btn.click()
                         logger.info("Clicked join: %s", label)
-                        return
+                        return True
                 except Exception:
                     pass
                 try:
@@ -585,17 +645,25 @@ class MeetBot:
                     if await btn.is_visible(timeout=1_000):
                         await btn.click()
                         logger.info("Clicked join (text): %s", label)
-                        return
+                        return True
                 except Exception:
                     pass
             await asyncio.sleep(1)
         logger.warning("Could not click join button")
+        return False
 
     async def _wait_for_admission(self) -> None:
         deadline = time.time() + JOIN_WAIT
         while time.time() < deadline:
             try:
-                for label in ["Share screen", "Turn on captions", "Send a reaction"]:
+                for label in [
+                    "Leave call",
+                    "Share screen",
+                    "Present now",
+                    "Turn on captions",
+                    "Show everyone",
+                    "Send a reaction",
+                ]:
                     btn = self._page.locator(f'button[aria-label*="{label}" i]').first
                     if await btn.is_visible(timeout=700):
                         logger.info("Admitted — detected: %s", label)
@@ -606,6 +674,24 @@ class MeetBot:
                 raise RuntimeError(
                     "Atom could not open this Meet. The meeting may require a signed-in Google account or host admission."
                 )
+            try:
+                body = (await self._page.locator("body").inner_text(timeout=1_000)).lower()
+                blocked_markers = [
+                    "you can't join this call",
+                    "you cannot join this call",
+                    "meeting code is invalid",
+                    "no one responded to your request",
+                    "your request to join was denied",
+                ]
+                if any(marker in body for marker in blocked_markers):
+                    raise RuntimeError(
+                        "Google Meet did not allow Atom to join. Check the meeting link, "
+                        "guest access setting, and host admission request."
+                    )
+            except RuntimeError:
+                raise
+            except Exception:
+                pass
             await asyncio.sleep(1.5)
         raise RuntimeError("Atom was not admitted to the meeting, so no recording was saved.")
 

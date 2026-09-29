@@ -24,9 +24,11 @@ from core.storage import (
     add_recording,
     cleanup_recording_files,
     delete_recording,
+    delete_recording_admin,
     get_recording_media,
     get_recording_media_info,
     list_recordings,
+    list_admin_recordings,
     max_recording_bytes,
     purge_local_recording_files,
 )
@@ -43,7 +45,7 @@ from meeting.meet.auth import (
     clear_profile,
     clear_profile_locks,
 )
-from meeting.meet.bot import MeetBot, RECORDINGS_DIR
+from meeting.meet.bot import MeetBot, RECORDINGS_DIR, runtime_diagnostics
 
 SESSION_COOKIE = "atom_session"
 
@@ -232,6 +234,41 @@ async def auth_start(request: Request) -> JSONResponse:
 
     asyncio.create_task(_run())
     return JSONResponse({"ok": True, "message": "Auth started"})
+
+
+@app.get("/admin/recordings")
+async def admin_recordings(request: Request) -> JSONResponse:
+    blocked = _admin_guard(request)
+    if blocked:
+        return blocked
+    items = list_admin_recordings()
+    return JSONResponse({
+        "ok": True,
+        "items": items,
+        "count": len(items),
+        "total_bytes": sum(item.get("size", 0) for item in items if item.get("stored")),
+    })
+
+
+@app.delete("/admin/recordings/{rec_id}")
+async def admin_delete_recording(rec_id: str, request: Request) -> JSONResponse:
+    blocked = _admin_guard(request)
+    if blocked:
+        return blocked
+    deleted = delete_recording_admin(rec_id)
+    return JSONResponse(
+        {"ok": deleted, "message": "Recording deleted" if deleted else "Recording not found"},
+        status_code=200 if deleted else 404,
+    )
+
+
+@app.post("/admin/bot-check")
+async def admin_bot_check(request: Request) -> JSONResponse:
+    blocked = _admin_guard(request)
+    if blocked:
+        return blocked
+    result = await runtime_diagnostics()
+    return JSONResponse(result, status_code=200 if result["ok"] else 503)
 
 
 # ── End-user auth (Continue with Google) ──────────────────────────────────────

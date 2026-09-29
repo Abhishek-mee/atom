@@ -153,6 +153,39 @@ def list_recordings(user_sub: str = "") -> list[dict]:
     return out
 
 
+def list_admin_recordings() -> list[dict]:
+    """Return all recording metadata with owner details for the admin portal."""
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT r.id, r.user_sub, r.title, r.meet_code, r.created_at,
+                   r.duration, r.size, r.filename, r.summary, r.content_type,
+                   r.recording_data IS NOT NULL AS stored,
+                   u.email AS owner_email, u.username AS owner_username
+            FROM recordings AS r
+            LEFT JOIN users AS u ON u.sub = r.user_sub
+            ORDER BY r.created_at DESC
+            """
+        ).fetchall()
+    items = []
+    for row in rows:
+        item = _decorate(_row_to_entry(row))
+        item["owner_email"] = row["owner_email"] or "unknown"
+        item["owner_username"] = row["owner_username"] or "unknown"
+        items.append(item)
+    return items
+
+
+def delete_recording_admin(rec_id: str) -> bool:
+    """Delete one completed recording without requiring its owner session."""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT user_sub FROM recordings WHERE id = ?",
+            (rec_id,),
+        ).fetchone()
+    return bool(row and delete_recording(rec_id, row["user_sub"]))
+
+
 def get_recording_media_info(rec_id: str, user_sub: str) -> dict | None:
     """Return media metadata without loading the recording BLOB."""
     with connect() as conn:

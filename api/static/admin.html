@@ -27,6 +27,14 @@ pre { overflow:auto; background:#151311; color:#F5F3EE; border-radius:8px; paddi
 .actions { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0 18px; }
 .help { border:1px solid var(--line); border-radius:8px; padding:12px; background:#F9F7F2; color:var(--muted); font:11px/1.7 var(--m); margin:14px 0; }
 .help code { color:var(--ink); }
+.section-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:24px 0 10px; }
+.section-head h2 { margin:0; font-size:17px; }
+.recordings { border-top:1px solid var(--line); }
+.recording { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; align-items:center; padding:13px 0; border-bottom:1px solid var(--line); }
+.recording-title { font-weight:800; font-size:14px; overflow-wrap:anywhere; }
+.recording-meta { margin-top:4px; color:var(--muted); font:10px/1.55 var(--m); overflow-wrap:anywhere; }
+.danger { color:var(--red); border-color:rgba(201,72,57,.45); }
+.empty { padding:18px 0; color:var(--muted); font:12px var(--m); }
 @media (max-width:640px) { .grid { grid-template-columns:1fr; } .token { flex-direction:column; } }
 </style>
 </head>
@@ -47,6 +55,7 @@ pre { overflow:auto; background:#151311; color:#F5F3EE; border-radius:8px; paddi
     <button class="primary" onclick="startAuth()">start bot Google sign-in</button>
     <button onclick="resetAuth()">reset sign-in state</button>
     <button onclick="clearAuth()">clear bot profile</button>
+    <button onclick="checkBot()">run bot diagnostic</button>
     <button onclick="refresh()">refresh</button>
   </div>
   <div class="help">
@@ -55,11 +64,20 @@ pre { overflow:auto; background:#151311; color:#F5F3EE; border-radius:8px; paddi
     <code>/app/data/config/chrome_profile</code>.
   </div>
 
+  <div class="section-head">
+    <h2>stored recordings</h2>
+    <button onclick="loadRecordings()">refresh list</button>
+  </div>
+  <div class="recordings" id="recordings">
+    <div class="empty">Enter ADMIN_TOKEN to load recordings.</div>
+  </div>
+
   <pre id="out">loading...</pre>
 </main>
 <script>
 const out = document.getElementById('out');
 const cards = document.getElementById('cards');
+const recordings = document.getElementById('recordings');
 const tokenEl = document.getElementById('token');
 tokenEl.value = localStorage.getItem('atom-admin-token') || '';
 
@@ -113,6 +131,7 @@ async function refresh() {
   } else {
     notice.textContent = 'Guest bot fallback is active. Add a bot Google profile only for restricted meetings.';
   }
+  if (status.res.status !== 401) await loadRecordings();
 }
 
 async function startAuth() { await call('/auth/start', {method:'POST'}); setTimeout(refresh, 700); }
@@ -121,6 +140,67 @@ async function clearAuth() {
   if (!confirm('Clear saved bot Google profile?')) return;
   await call('/auth/clear', {method:'POST'});
   await refresh();
+}
+
+function esc(value) {
+  return String(value ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function fmtBytes(value) {
+  const bytes = Number(value || 0);
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function fmtDuration(value) {
+  const seconds = Number(value || 0);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2,'0')}`;
+}
+
+async function loadRecordings() {
+  recordings.innerHTML = '<div class="empty">Loading recordings...</div>';
+  const result = await call('/admin/recordings');
+  if (!result.res.ok) {
+    recordings.innerHTML = `<div class="empty">${esc(result.data.message || 'Could not load recordings.')}</div>`;
+    return;
+  }
+  const items = result.data.items || [];
+  if (!items.length) {
+    recordings.innerHTML = '<div class="empty">No completed recordings are stored.</div>';
+    return;
+  }
+  recordings.innerHTML = items.map(item => `
+    <div class="recording" data-id="${esc(item.id)}">
+      <div>
+        <div class="recording-title">${esc(item.title || 'meeting')}</div>
+        <div class="recording-meta">
+          ${esc(item.owner_email)} · ${new Date(item.created_at * 1000).toLocaleString()} ·
+          ${fmtDuration(item.duration)} · ${fmtBytes(item.size)} ·
+          ${item.stored ? 'database stored' : 'media unavailable'}
+        </div>
+      </div>
+      <button class="danger" onclick="removeRecording(this.closest('.recording').dataset.id)" title="permanently delete recording">delete</button>
+    </div>
+  `).join('');
+}
+
+async function removeRecording(id) {
+  if (!confirm('Permanently delete this recording from the database?')) return;
+  const row = recordings.querySelector(`[data-id="${CSS.escape(id)}"]`);
+  if (row) row.style.opacity = '.45';
+  const result = await call('/admin/recordings/' + encodeURIComponent(id), {method:'DELETE'});
+  if (result.res.ok && result.data.ok) await loadRecordings();
+  else if (row) row.style.opacity = '1';
+}
+
+async function checkBot() {
+  const notice = document.getElementById('notice');
+  notice.textContent = 'Running Chromium and FFmpeg diagnostics...';
+  const result = await call('/admin/bot-check', {method:'POST'});
+  notice.textContent = result.data.ok
+    ? 'Bot runtime is ready: Chromium, FFmpeg, storage, and recording are available.'
+    : 'Bot runtime diagnostic failed. See the details below.';
 }
 
 refresh();
