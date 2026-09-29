@@ -171,6 +171,10 @@ window.ATOM_API_BASE = "https://api.abhishek-meena.in";
 
 Completed files are stored as BLOBs in `/app/data/atom.db`. `MAX_RECORDING_DB_MB` limits one recording, but the Railway volume must also have room for the database plus the temporary file created while recording. Monitor volume usage and increase the volume before public use.
 
+## Meeting summaries
+
+Add `OPENAI_API_KEY` in Railway Variables to enable summaries. Atom extracts audio-only chunks after each recording, transcribes them with `gpt-transcribe`, generates a structured summary with `gpt-5.4-mini`, stores only the summary, and deletes the temporary audio chunks. The model names can be overridden with `OPENAI_TRANSCRIBE_MODEL` and `OPENAI_SUMMARY_MODEL`.
+
 ## Bot Google profile
 
 After deployment, open:

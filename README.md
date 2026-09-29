@@ -12,6 +12,7 @@ Atom is a Google Meet recording app that demonstrates the core loop first: provi
 - Auto-leave when the meeting is alone is implemented.
 - Per-user profile and recording library are implemented.
 - Recording deletion is scoped to the signed-in owner.
+- Audio-only transcription and structured meeting summaries are generated after recording.
 - Smoke tests cover the main API routes.
 
 ## What the app does today
@@ -21,7 +22,8 @@ Atom is a Google Meet recording app that demonstrates the core loop first: provi
 3. Atom joins the meeting and records it.
 4. When the meeting ends, the recording is finalized.
 5. The finished file is stored in SQLite on Atom's persistent Railway volume.
-6. The recording appears in the user's private library for playback or download.
+6. Atom transcribes the meeting audio and generates key points, decisions, and action items.
+7. The recording and summary appear in the user's private library.
 
 ## Project layout
 
@@ -33,6 +35,7 @@ Atom is a Google Meet recording app that demonstrates the core loop first: provi
 - `core/users.py` - Google user identities and sessions.
 - `core/database.py` - SQLite schema and legacy JSON import.
 - `core/storage.py` - Database-backed private recording library.
+- `core/summarizer.py` - Audio transcription and meeting summary pipeline.
 - `scripts/smoke_test.py` - Basic health checks.
 
 ## Local run
@@ -62,6 +65,9 @@ DEBUG_DIR=api/static/debug
 RECORD_MEETING=true
 AGENT_NAME=Atom
 MAX_RECORDING_DB_MB=200
+OPENAI_API_KEY=...
+OPENAI_TRANSCRIBE_MODEL=gpt-transcribe
+OPENAI_SUMMARY_MODEL=gpt-5.4-mini
 APP_BASE_URL=http://127.0.0.1:8000
 ```
 
@@ -83,6 +89,7 @@ Minimum production requirements:
 - `ADMIN_TOKEN` to protect bot-profile setup endpoints.
 - Persistent volume mounted at `/app/data` for `atom.db`, temporary capture files, debug captures, and the bot Chrome profile.
 - Enough persistent-volume capacity for the recording BLOBs stored in `atom.db`.
+- An `OPENAI_API_KEY` for audio transcription and meeting summaries.
 - Google OAuth app published to Production and verified if Google requests it; Testing mode only works for listed test users.
 
 Useful production endpoints:
@@ -99,4 +106,4 @@ GitHub Pages is supported for the static frontend through `.github/workflows/pag
 
 - Runtime files such as session state, user data, recordings, and browser profile data are ignored by git.
 - If old `config/users.json`, `config/sessions.json`, or `config/recordings.json` files exist, Atom imports them into SQLite on startup.
-- The first demo focuses on invite -> join -> record -> store. Summaries and transcripts can be layered on later.
+- Atom sends audio-only chunks to OpenAI for summary generation; it does not send meeting video frames and does not retain transcripts.

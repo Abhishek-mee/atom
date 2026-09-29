@@ -31,7 +31,9 @@ from core.storage import (
     list_admin_recordings,
     max_recording_bytes,
     purge_local_recording_files,
+    update_recording_summary,
 )
+from core.summarizer import summarize_recording, summary_enabled
 from core.users import (
     google_client_id, verify_google_credential, get_or_create_user,
     create_session, user_for_session, destroy_session, user_count, session_count,
@@ -136,6 +138,7 @@ def _snapshot_health() -> dict:
         "bot_google_profile": has_auth(),
         "bot_guest_fallback": True,
         "recording_storage": "database",
+        "meeting_summaries": summary_enabled(),
         "max_recording_db_mb": max_recording_bytes() // (1024 * 1024),
         "google_auth_enabled": bool(google_client_id()),
         "database": str(DB_PATH),
@@ -150,6 +153,7 @@ def _snapshot_readiness() -> dict:
         "recordings_dir": RECORDINGS_DIR.exists(),
         "google_client_id": bool(google_client_id()),
         "database_recordings": True,
+        "meeting_summaries": summary_enabled(),
         "bot_google_profile": has_auth(),
         "bot_guest_fallback": True,
     }
@@ -277,6 +281,7 @@ async def app_config() -> JSONResponse:
     return JSONResponse({
         "google_client_id": google_client_id(),
         "recording_storage": "database",
+        "meeting_summaries": summary_enabled(),
         "max_recording_db_mb": max_recording_bytes() // (1024 * 1024),
         "auth_ready": True,
         "bot_google_profile": has_auth(),
@@ -542,10 +547,53 @@ async def meeting_ws(ws: WebSocket) -> None:
                                 entry = await add_recording(
                                     local, meet_code=meet_code, user_sub=user["sub"]
                                 )
+                                if summary_enabled():
+                                    await send({
+                                        "type": "status",
+                                        "message": "Generating your meeting summary from audio...",
+                                    })
+                                    try:
+                                        summary = await summarize_recording(local)
+                                        entry = update_recording_summary(
+                                            entry["id"],
+                                            user["sub"],
+                                            summary=summary,
+                                            status="complete",
+                                        ) or entry
+                                    except Exception as summary_exc:
+                                        logger.exception("Meeting summary generation failed")
+                                        entry = update_recording_summary(
+                                            entry["id"],
+                                            user["sub"],
+                                            summary=(
+                                                "The recording was saved, but its meeting summary could not "
+                                                "be generated. You can still play or download the recording."
+                                            ),
+                                            status="failed",
+                                            error=str(summary_exc)[:500],
+                                        ) or entry
+                                else:
+                                    entry = update_recording_summary(
+                                        entry["id"],
+                                        user["sub"],
+                                        summary=(
+                                            "The recording was saved. AI summary generation is not configured "
+                                            "on this Atom server."
+                                        ),
+                                        status="not_configured",
+                                        error="OPENAI_API_KEY is not configured.",
+                                    ) or entry
                             finally:
                                 cleanup_recording_files(local)
                             await send({"type": "recording", "entry": entry})
-                            await send({"type": "status", "message": "Recording saved to your Atom library"})
+                            await send({
+                                "type": "status",
+                                "message": (
+                                    "Recording and summary saved to your Atom library"
+                                    if entry.get("summary_status") == "complete"
+                                    else "Recording saved to your Atom library"
+                                ),
+                            })
                         else:
                             await send({"type": "status", "message": "Meeting ended (no recording captured)"})
                     except Exception as e:

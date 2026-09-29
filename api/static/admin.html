@@ -114,6 +114,7 @@ async function refresh() {
     yn('database', ready.checks?.database),
     yn('google user auth', ready.checks?.google_client_id),
     yn('database recordings', ready.checks?.database_recordings),
+    yn('AI meeting summaries', ready.checks?.meeting_summaries),
     yn('bot google profile', ready.checks?.bot_google_profile || ready.checks?.bot_guest_fallback),
   ].join('');
   const status = await call('/auth/status');
@@ -177,7 +178,8 @@ async function loadRecordings() {
         <div class="recording-meta">
           ${esc(item.owner_email)} · ${new Date(item.created_at * 1000).toLocaleString()} ·
           ${fmtDuration(item.duration)} · ${fmtBytes(item.size)} ·
-          ${item.stored ? 'database stored' : 'media unavailable'}
+          ${item.stored ? 'database stored' : 'media unavailable'} ·
+          summary ${esc(item.summary_status || 'unknown')}
         </div>
       </div>
       <button class="danger" onclick="removeRecording(this.closest('.recording').dataset.id)" title="permanently delete recording">delete</button>

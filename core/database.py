@@ -60,6 +60,9 @@ def init_db() -> None:
                 drive_url TEXT,
                 drive_delivery_updated_at INTEGER,
                 summary TEXT,
+                summary_status TEXT NOT NULL DEFAULT 'pending',
+                summary_error TEXT,
+                summary_updated_at INTEGER,
                 content_type TEXT,
                 recording_data BLOB,
                 FOREIGN KEY (user_sub) REFERENCES users(sub) ON DELETE CASCADE
@@ -77,6 +80,9 @@ def init_db() -> None:
             "drive_url": "TEXT",
             "drive_delivery_updated_at": "INTEGER",
             "summary": "TEXT",
+            "summary_status": "TEXT NOT NULL DEFAULT 'pending'",
+            "summary_error": "TEXT",
+            "summary_updated_at": "INTEGER",
             "content_type": "TEXT",
             "recording_data": "BLOB",
         })

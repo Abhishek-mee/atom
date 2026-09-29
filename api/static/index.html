@@ -277,6 +277,7 @@ html[data-theme="dark"] .dash-nav, html[data-theme="dark"] .topbar { background:
 .lib-info { flex:1; min-width:0; }
 .lib-title { font-size:13px; font-weight:600; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .lib-meta { font-family:var(--m); font-size:10px; color:var(--muted); margin-top:2px; letter-spacing:.3px; }
+.lib-summary { margin-top:6px; color:var(--ink2); font-size:11px; line-height:1.45; white-space:pre-line; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
 .lib-play { font-family:var(--m); font-size:10px; font-weight:600; letter-spacing:.5px; text-decoration:none; color:var(--ink2); padding:6px 11px; border:1px solid var(--line); border-radius:6px; transition:all .15s; background:var(--panel); }
 .lib-play:hover { border-color:var(--accent); color:var(--accent); }
 .lib-dl { font-size:14px; text-decoration:none; color:var(--muted); padding:4px 8px; border-radius:6px; transition:color .15s; }
@@ -345,7 +346,10 @@ html[data-theme="dark"] .dash-nav, html[data-theme="dark"] .topbar { background:
 .dl-btn:hover { background:var(--accent2); box-shadow:0 12px 26px rgba(199,122,24,.22); }
 .again-btn { font-family:var(--m); font-size:11px; font-weight:600; letter-spacing:.5px; padding:11px 18px; border-radius:6px; border:1px solid var(--line); background:transparent; color:var(--ink2); cursor:pointer; transition:all .15s; }
 .again-btn:hover { border-color:var(--accent); color:var(--accent); }
-.result-hint { font-family:var(--m); font-size:10px; color:var(--faint); letter-spacing:.3px; }
+.result-summary { width:100%; border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:18px; text-align:left; }
+.result-summary-head { font-family:var(--m); font-size:9px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:var(--accent); margin-bottom:10px; }
+.result-hint { font-size:13px; line-height:1.65; color:var(--ink2); white-space:pre-wrap; overflow-wrap:anywhere; }
+.result-summary.failed .result-summary-head { color:var(--red); }
 .delivery-state { font-family:var(--m); font-size:10px; color:var(--muted); border:1px solid var(--line); border-radius:6px; padding:8px 12px; background:var(--panel); }
 .delivery-state.sent { color:var(--green); border-color:rgba(44,138,94,.35); }
 .delivery-state.failed { color:var(--red); border-color:rgba(201,72,57,.35); }
@@ -605,14 +609,17 @@ html[data-theme="dark"] .dash-nav, html[data-theme="dark"] .topbar { background:
         <button class="again-btn" onclick="goHome()">record another</button>
       </div>
       <div class="delivery-state" id="deliveryState">saving to your private library</div>
-      <div class="result-hint">Only your signed-in account can access this recording.</div>
+      <section class="result-summary" id="resultSummary">
+        <div class="result-summary-head">meeting summary</div>
+        <div class="result-hint">Generating summary...</div>
+      </section>
     </div>
   </div>
 </div>
 
 <script>
 let ws=null, timerID=null, timerStart=null, pendingJoin=null, wsRetry=0, loggedIn=false, joining=false;
-let appConfig={google_client_id:'', recording_storage:'database', auth_ready:false, bot_google_profile:false, bot_guest_fallback:true};
+let appConfig={google_client_id:'', recording_storage:'database', auth_ready:false, bot_google_profile:false, bot_guest_fallback:true, meeting_summaries:false};
 let stageTrail=[];
 const API_BASE = (window.ATOM_API_BASE || '').replace(/\/$/, '');
 
@@ -783,8 +790,10 @@ function refreshOpsState() {
     setOpsState('bad', 'Google user auth is not configured - set GOOGLE_CLIENT_ID before deployment');
   } else if (!appConfig.bot_google_profile) {
     setOpsState('warn', 'ready with guest bot fallback - some restricted Meets may still ask the host to admit Atom');
+  } else if (!appConfig.meeting_summaries) {
+    setOpsState('warn', 'recording is ready; meeting summaries need OPENAI_API_KEY on the server');
   } else {
-    setOpsState('ready', 'ready: Google auth, bot join, recording, and private database storage are configured');
+    setOpsState('ready', 'ready: Google auth, bot join, recording, summaries, and private storage are configured');
   }
 }
 
@@ -849,10 +858,12 @@ function showResult(entry) {
   video.src=storedUrl;
   video.style.display=storedUrl ? 'block' : 'none';
   const hint=document.querySelector('.result-hint');
+  const summaryBox=document.getElementById('resultSummary');
   const deliveryEl = document.getElementById('deliveryState');
   deliveryEl.className = 'delivery-state ' + (entry.stored ? 'sent' : 'failed');
   deliveryEl.textContent = entry.stored ? 'saved in your private Atom database' : 'recording could not be stored';
   hint.textContent = entry.summary || 'Only your signed-in account can access this recording.';
+  summaryBox.classList.toggle('failed', !['complete','pending'].includes(entry.summary_status));
   setStatus(entry.stored ? 'recording saved' : 'storage failed');
 }
 
@@ -1008,6 +1019,7 @@ async function loadLibrary() {
         <div class="lib-info">
           <div class="lib-title">${esc(e.title)}</div>
           <div class="lib-meta">${fmtDate(e.created_at)} · ${fmtDur(e.duration)}${storageMeta(e)}</div>
+          ${e.summary ? `<div class="lib-summary">${esc(e.summary)}</div>` : ''}
         </div>
         ${e.url ? `<a class="lib-play" href="${mediaUrl(e.url)}" target="_blank">play</a>` : ''}
         <button class="lib-del" onclick="deleteRec('${e.id}')" title="delete">✕</button>

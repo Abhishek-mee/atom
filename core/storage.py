@@ -72,6 +72,9 @@ def _add_recording_sync(local_path: Path, meet_code: str, user_sub: str) -> dict
         "content_type": content_type,
         "stored": True,
         "summary": build_meeting_summary(meet_code=meet_code, duration=duration),
+        "summary_status": "pending",
+        "summary_error": None,
+        "summary_updated_at": None,
     }
 
     with connect() as conn:
@@ -79,9 +82,10 @@ def _add_recording_sync(local_path: Path, meet_code: str, user_sub: str) -> dict
             """
             INSERT INTO recordings (
                 id, user_sub, title, meet_code, created_at, duration, size, filename,
-                summary, content_type, recording_data
+                summary, summary_status, summary_error, summary_updated_at,
+                content_type, recording_data
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 entry["id"],
@@ -93,6 +97,9 @@ def _add_recording_sync(local_path: Path, meet_code: str, user_sub: str) -> dict
                 entry["size"],
                 entry["filename"],
                 entry["summary"],
+                entry["summary_status"],
+                entry["summary_error"],
+                entry["summary_updated_at"],
                 entry["content_type"],
                 recording_data,
             ),
@@ -104,10 +111,42 @@ def build_meeting_summary(*, meet_code: str, duration: int) -> str:
     minutes = max(1, round((duration or 0) / 60))
     title = (meet_code or "meeting").replace("-", " ").strip() or "meeting"
     return (
-        f"Atom recorded the Google Meet session '{title}' for about {minutes} minute"
-        f"{'' if minutes == 1 else 's'}. The recording is stored privately in the user's Atom library. "
-        "Content-level summaries require transcript capture and are not generated from private account screens."
+        f"Atom recorded '{title}' for about {minutes} minute"
+        f"{'' if minutes == 1 else 's'}. The meeting summary is being generated from its audio."
     )
+
+
+def update_recording_summary(
+    rec_id: str,
+    user_sub: str,
+    *,
+    summary: str,
+    status: str,
+    error: str | None = None,
+) -> dict | None:
+    """Store summary state and return refreshed owner-scoped metadata."""
+    updated_at = int(time.time())
+    with connect() as conn:
+        changed = conn.execute(
+            """
+            UPDATE recordings
+            SET summary = ?, summary_status = ?, summary_error = ?, summary_updated_at = ?
+            WHERE id = ? AND user_sub = ?
+            """,
+            (summary, status, error, updated_at, rec_id, user_sub),
+        ).rowcount
+        if not changed:
+            return None
+        row = conn.execute(
+            """
+            SELECT id, user_sub, title, meet_code, created_at, duration, size,
+                   filename, summary, summary_status, summary_error, summary_updated_at,
+                   content_type, recording_data IS NOT NULL AS stored
+            FROM recordings WHERE id = ? AND user_sub = ?
+            """,
+            (rec_id, user_sub),
+        ).fetchone()
+    return _decorate(_row_to_entry(row)) if row else None
 
 
 def _decorate(e: dict) -> dict:
@@ -138,7 +177,8 @@ def list_recordings(user_sub: str = "") -> list[dict]:
     out = []
     query = """
         SELECT id, user_sub, title, meet_code, created_at, duration, size,
-               filename, summary, content_type,
+               filename, summary, summary_status, summary_error, summary_updated_at,
+               content_type,
                recording_data IS NOT NULL AS stored
         FROM recordings
     """
@@ -159,7 +199,8 @@ def list_admin_recordings() -> list[dict]:
         rows = conn.execute(
             """
             SELECT r.id, r.user_sub, r.title, r.meet_code, r.created_at,
-                   r.duration, r.size, r.filename, r.summary, r.content_type,
+                   r.duration, r.size, r.filename, r.summary, r.summary_status,
+                   r.summary_error, r.summary_updated_at, r.content_type,
                    r.recording_data IS NOT NULL AS stored,
                    u.email AS owner_email, u.username AS owner_username
             FROM recordings AS r
@@ -254,7 +295,8 @@ def delete_recording(rec_id: str, user_sub: str) -> bool:
         row = conn.execute(
             """
             SELECT id, user_sub, title, meet_code, created_at, duration, size,
-                   filename, summary, content_type,
+                   filename, summary, summary_status, summary_error, summary_updated_at,
+                   content_type,
                    recording_data IS NOT NULL AS stored
             FROM recordings WHERE id = ? AND user_sub = ?
             """,
@@ -286,6 +328,11 @@ def _row_to_entry(row) -> dict:
         "size": row["size"],
         "filename": row["filename"],
         "summary": row["summary"] if "summary" in row.keys() else "",
+        "summary_status": row["summary_status"] if "summary_status" in row.keys() else "complete",
+        "summary_error": row["summary_error"] if "summary_error" in row.keys() else None,
+        "summary_updated_at": (
+            row["summary_updated_at"] if "summary_updated_at" in row.keys() else None
+        ),
         "content_type": row["content_type"] if "content_type" in row.keys() else None,
         "stored": bool(row["stored"]) if "stored" in row.keys() else (
             "recording_data" in row.keys() and row["recording_data"] is not None
